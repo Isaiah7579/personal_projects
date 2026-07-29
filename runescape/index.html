@@ -1,0 +1,761 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RS Grand Exchange Flip Finder</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #14161c;
+    --panel: #1c1f28;
+    --border: #2c3140;
+    --text: #e6e8ef;
+    --muted: #9aa0b0;
+    --accent: #5b8cff;
+    --accent2: #34d399;
+    --danger: #f87171;
+    --row-hover: #232838;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 24px;
+  }
+  h1 {
+    font-size: 1.4rem;
+    margin: 0 0 4px 0;
+  }
+  .subtitle {
+    color: var(--muted);
+    font-size: 0.85rem;
+    margin-bottom: 20px;
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 20px;
+    margin-bottom: 18px;
+  }
+  .filters {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px 18px;
+  }
+  .field label {
+    display: block;
+    font-size: 0.72rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 4px;
+  }
+  .field input {
+    width: 100%;
+    background: #11131a;
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 6px 8px;
+    font-size: 0.9rem;
+  }
+  .field input:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  .controls-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 16px;
+    flex-wrap: wrap;
+  }
+  button#fetchBtn {
+    background: var(--accent);
+    color: white;
+    border: none;
+    padding: 9px 22px;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button#fetchBtn:hover { background: #4a7ae0; }
+  button#fetchBtn:disabled { background: #3a3f4d; cursor: not-allowed; }
+  #status {
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
+  #status.error { color: var(--danger); }
+  #status.ok { color: var(--accent2); }
+  .table-wrap {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: auto;
+    max-height: 72vh;
+  }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 0.86rem;
+  }
+  thead th {
+    position: sticky;
+    top: 0;
+    background: #22262f;
+    color: var(--text);
+    text-align: right;
+    padding: 10px 12px;
+    cursor: pointer;
+    user-select: none;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  thead th:first-child, thead th.text-col { text-align: left; }
+  thead th:hover { background: #2a2f3b; }
+  thead th .arrow { color: var(--accent); margin-left: 4px; }
+  tbody td {
+    padding: 8px 12px;
+    text-align: right;
+    border-bottom: 1px solid #23283350;
+    white-space: nowrap;
+  }
+  tbody td.text-col { text-align: left; font-weight: 500; }
+  tbody tr:hover { background: var(--row-hover); }
+  .margin-pos { color: var(--accent2); }
+  .row-count {
+    color: var(--muted);
+    font-size: 0.8rem;
+    margin: 8px 2px;
+  }
+  a.src-link { color: var(--accent); }
+
+  .journal-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+    margin-bottom: 18px;
+  }
+  @media (max-width: 900px) {
+    .journal-row { grid-template-columns: 1fr; }
+  }
+  .panel h2 {
+    font-size: 0.95rem;
+    margin: 0 0 12px 0;
+  }
+  .inline-form {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    align-items: flex-end;
+  }
+  .inline-form .field { flex: 1; min-width: 110px; }
+  .inline-form button {
+    background: var(--accent2);
+    color: #08281c;
+    border: none;
+    padding: 9px 18px;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .inline-form button:hover { background: #2bc48d; }
+  .profit-preview {
+    font-size: 0.8rem;
+    color: var(--muted);
+    margin-top: 8px;
+  }
+  .profit-preview .amt { color: var(--accent2); font-weight: 600; }
+  .wealth-summary {
+    display: flex;
+    gap: 24px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+  }
+  .wealth-summary .stat-label {
+    font-size: 0.72rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .wealth-summary .stat-value {
+    font-size: 1.1rem;
+    font-weight: 600;
+  }
+  .wealth-summary .stat-value.pos { color: var(--accent2); }
+  .wealth-summary .stat-value.neg { color: var(--danger); }
+  #wealthChart, #itemFlipChart {
+    width: 100%;
+    height: 160px;
+    display: block;
+  }
+  .empty-note {
+    color: var(--muted);
+    font-size: 0.82rem;
+    font-style: italic;
+  }
+  td.has-flips {
+    text-decoration: underline;
+    text-decoration-style: dotted;
+    text-decoration-color: var(--accent);
+    cursor: pointer;
+    color: var(--accent);
+  }
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    align-items: center;
+    justify-content: center;
+    z-index: 50;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal-box {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 24px;
+    width: min(640px, 92vw);
+    max-height: 82vh;
+    overflow: auto;
+  }
+  .modal-box .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+  .modal-box h3 { margin: 0; font-size: 1.05rem; }
+  .modal-box button.close-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 4px 10px;
+    cursor: pointer;
+  }
+  .modal-box table { font-size: 0.84rem; }
+  .modal-box th, .modal-box td { padding: 6px 10px; text-align: right; }
+  .modal-box th.text-col, .modal-box td.text-col { text-align: left; }
+  .modal-total {
+    margin-top: 10px;
+    font-size: 0.9rem;
+    text-align: right;
+  }
+  .modal-total .amt { color: var(--accent2); font-weight: 700; }
+</style>
+</head>
+<body>
+
+<h1>RS Grand Exchange Flip Finder</h1>
+<div class="subtitle">Live data from <a class="src-link" href="https://prices.runescape.wiki/rs/all-items" target="_blank">prices.runescape.wiki</a> — click a column header to sort.</div>
+
+<div class="panel">
+  <div class="filters">
+    <div class="field"><label>Min Buy Limit</label><input type="number" id="f_minLimit" value="100"></div>
+    <div class="field"><label>Min Price</label><input type="number" id="f_minPrice" value="500"></div>
+    <div class="field"><label>Max Price</label><input type="number" id="f_maxPrice" value="3000000"></div>
+    <div class="field"><label>Min 4hr Volume GP (M)</label><input type="number" id="f_minFourHrVolumeGp" value="1"></div>
+    <div class="field"><label>Min Margin</label><input type="number" id="f_minMargin" value="1"></div>
+    <div class="field"><label>Max Margin %</label><input type="number" id="f_maxMarginPct" value="100"></div>
+    <div class="field"><label>Max Age (minutes)</label><input type="number" id="f_maxAgeMin" value="60"></div>
+  </div>
+  <div class="controls-row">
+    <button id="saveDefaultsBtn" onclick="saveDefaults()">Save as Default</button>
+    <span id="status">Ready.</span>
+  </div>
+</div>
+
+<div class="journal-row">
+  <div class="panel">
+    <h2>Wealth Tracker</h2>
+    <div class="wealth-summary">
+      <div>
+        <div class="stat-label">Latest</div>
+        <div class="stat-value" id="wealthLatest">—</div>
+      </div>
+      <div>
+        <div class="stat-label">Change Since Last</div>
+        <div class="stat-value" id="wealthDelta">—</div>
+      </div>
+    </div>
+    <svg id="wealthChart"></svg>
+    <div class="inline-form" style="margin-top:12px;">
+      <div class="field"><label>Current Wealth (gp)</label><input type="number" id="f_wealthValue"></div>
+      <button onclick="addWealthEntry()">Log Wealth</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Flip Journal</h2>
+    <datalist id="itemNameList"></datalist>
+    <div class="inline-form">
+      <div class="field"><label>Item Name</label><input type="text" id="f_flipItem" list="itemNameList"></div>
+      <div class="field"><label>Buy Price</label><input type="number" id="f_flipBuy" oninput="updateFlipPreview()"></div>
+      <div class="field"><label>Sell Price</label><input type="number" id="f_flipSell" oninput="updateFlipPreview()"></div>
+      <div class="field"><label>Quantity</label><input type="number" id="f_flipQty" value="1" oninput="updateFlipPreview()"></div>
+      <button onclick="addFlip()">Log Flip</button>
+    </div>
+    <div class="profit-preview" id="flipPreview">Profit: —</div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="flipModal">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h3 id="flipModalTitle">Flips</h3>
+      <button class="close-btn" onclick="closeFlipModal()">Close</button>
+    </div>
+    <svg id="itemFlipChart"></svg>
+    <table>
+      <thead>
+        <tr>
+          <th class="text-col">Date</th>
+          <th>Buy</th>
+          <th>Sell</th>
+          <th>Qty</th>
+          <th>Profit</th>
+        </tr>
+      </thead>
+      <tbody id="flipModalBody"></tbody>
+    </table>
+    <div class="modal-total">Total profit: <span class="amt" id="flipModalTotal"></span></div>
+  </div>
+</div>
+
+<div class="row-count" id="rowCount"></div>
+<div class="table-wrap">
+  <table id="dataTable">
+    <thead>
+      <tr>
+        <th class="text-col" data-key="name">Name</th>
+        <th data-key="buyPrice">Buy Price</th>
+        <th data-key="sellPrice">Sell Price</th>
+        <th data-key="buyLimitGp">Buy Limit GP</th>
+        <th data-key="dailyVolumeGp">Daily Vol GP</th>
+        <th data-key="lastBuy">Last Buy</th>
+        <th data-key="lastSell">Last Sell</th>
+        <th data-key="marginPct">Margin %</th>
+        <th data-key="fourHrProfit">4hr Profit</th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+</div>
+
+<script>
+const API = {
+  prices: 'https://prices.runescape.wiki/api/v2/rs/latest',
+  volumes: 'https://prices.runescape.wiki/api/v2/rs/volumes',
+  mapping: 'https://prices.runescape.wiki/api/v2/rs/mapping'
+};
+
+let rows = [];
+let sortKey = 'fourHrProfit';
+let sortDir = -1; // -1 desc, 1 asc
+
+const FILTER_IDS = [
+  'f_minLimit', 'f_minPrice', 'f_maxPrice', 'f_minFourHrVolumeGp',
+  'f_minMargin', 'f_maxMarginPct', 'f_maxAgeMin'
+];
+const DEFAULTS_KEY = 'rsGeFlipperDefaults';
+
+function saveDefaults() {
+  const values = {};
+  for (const id of FILTER_IDS) {
+    values[id] = document.getElementById(id).value;
+  }
+  localStorage.setItem(DEFAULTS_KEY, JSON.stringify(values));
+  setStatus('Defaults saved.', 'ok');
+}
+
+function loadDefaults() {
+  const raw = localStorage.getItem(DEFAULTS_KEY);
+  if (!raw) return;
+  try {
+    const values = JSON.parse(raw);
+    for (const id of FILTER_IDS) {
+      if (values[id] !== undefined) document.getElementById(id).value = values[id];
+    }
+  } catch (err) {
+    console.error('Failed to load saved defaults', err);
+  }
+}
+
+function setStatus(msg, kind) {
+  const el = document.getElementById('status');
+  el.textContent = msg;
+  el.className = kind || '';
+}
+
+async function fetchJson(url) {
+  const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+  if (!res.ok) throw new Error(`${url} -> HTTP ${res.status}`);
+  return res.json();
+}
+
+function formatGp(n) {
+  const abs = Math.abs(n);
+  if (abs >= 1_000_000_000) return (n / 1_000_000_000).toFixed(1) + 'B';
+  if (abs >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
+  if (abs >= 1_000) return (n / 1_000).toFixed(1) + 'K';
+  return Math.round(n).toLocaleString();
+}
+
+function fmtTime(ts) {
+  const seconds = Math.max(0, Math.floor(Date.now() / 1000 - ts));
+  const units = [
+    ['year', 31536000],
+    ['month', 2592000],
+    ['day', 86400],
+    ['hour', 3600],
+    ['minute', 60],
+    ['second', 1]
+  ];
+  for (const [name, secs] of units) {
+    const count = Math.floor(seconds / secs);
+    if (count >= 1) {
+      return `${count} ${name}${count === 1 ? '' : 's'} ago`;
+    }
+  }
+  return 'just now';
+}
+
+function renderLineChart(svgId, points, yFormat) {
+  const svg = document.getElementById(svgId);
+  const W = 600, H = 160, PAD = 34;
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.setAttribute('preserveAspectRatio', 'none');
+
+  if (points.length === 0) {
+    svg.innerHTML = `<text x="${W / 2}" y="${H / 2}" fill="#9aa0b0" font-size="12" text-anchor="middle">No entries yet</text>`;
+    return;
+  }
+
+  const xs = points.map(p => p.x);
+  const ys = points.map(p => p.y);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+  const spanX = maxX - minX || 1;
+  const spanY = maxY - minY || 1;
+
+  const scaleX = x => PAD + ((x - minX) / spanX) * (W - PAD * 2);
+  const scaleY = y => H - PAD - ((y - minY) / spanY) * (H - PAD * 2);
+
+  const polyPoints = points.map(p => `${scaleX(p.x)},${scaleY(p.y)}`).join(' ');
+  const circles = points.map(p => `
+    <circle cx="${scaleX(p.x)}" cy="${scaleY(p.y)}" r="3" fill="#5b8cff">
+      <title>${new Date(p.x).toLocaleString()}: ${yFormat(p.y)}</title>
+    </circle>
+  `).join('');
+
+  svg.innerHTML = `
+    <polyline points="${polyPoints}" fill="none" stroke="#5b8cff" stroke-width="2" />
+    ${circles}
+    <text x="${PAD}" y="${H - 8}" fill="#9aa0b0" font-size="10">${new Date(minX).toLocaleDateString()}</text>
+    <text x="${W - PAD}" y="${H - 8}" fill="#9aa0b0" font-size="10" text-anchor="end">${new Date(maxX).toLocaleDateString()}</text>
+    <text x="4" y="14" fill="#9aa0b0" font-size="10">${yFormat(maxY)}</text>
+    <text x="4" y="${H - PAD + 4}" fill="#9aa0b0" font-size="10">${yFormat(minY)}</text>
+  `;
+}
+
+const WEALTH_KEY = 'rsGeFlipperWealthLog';
+
+function loadWealthLog() {
+  try { return JSON.parse(localStorage.getItem(WEALTH_KEY)) || []; }
+  catch { return []; }
+}
+
+function saveWealthLog(log) {
+  localStorage.setItem(WEALTH_KEY, JSON.stringify(log));
+}
+
+function addWealthEntry() {
+  const input = document.getElementById('f_wealthValue');
+  const val = Number(input.value);
+  if (!input.value || Number.isNaN(val)) return;
+
+  const log = loadWealthLog();
+  log.push({ ts: Date.now(), value: val });
+  log.sort((a, b) => a.ts - b.ts);
+  saveWealthLog(log);
+  input.value = '';
+  renderWealthPanel();
+}
+
+function renderWealthPanel() {
+  const log = loadWealthLog();
+  const latestEl = document.getElementById('wealthLatest');
+  const deltaEl = document.getElementById('wealthDelta');
+
+  if (log.length === 0) {
+    latestEl.textContent = '—';
+    deltaEl.textContent = '—';
+    deltaEl.className = 'stat-value';
+  } else {
+    const latest = log[log.length - 1];
+    latestEl.textContent = formatGp(latest.value);
+    if (log.length >= 2) {
+      const delta = latest.value - log[log.length - 2].value;
+      deltaEl.textContent = (delta >= 0 ? '+' : '') + formatGp(delta);
+      deltaEl.className = 'stat-value ' + (delta >= 0 ? 'pos' : 'neg');
+    } else {
+      deltaEl.textContent = '—';
+      deltaEl.className = 'stat-value';
+    }
+  }
+
+  renderLineChart('wealthChart', log.map(e => ({ x: e.ts, y: e.value })), formatGp);
+}
+
+const FLIPS_KEY = 'rsGeFlipperFlips';
+
+function loadFlips() {
+  try { return JSON.parse(localStorage.getItem(FLIPS_KEY)) || {}; }
+  catch { return {}; }
+}
+
+function saveFlips(flips) {
+  localStorage.setItem(FLIPS_KEY, JSON.stringify(flips));
+}
+
+function hasFlips(name) {
+  return !!loadFlips()[name.toLowerCase()];
+}
+
+function updateFlipPreview() {
+  const buy = Number(document.getElementById('f_flipBuy').value);
+  const sell = Number(document.getElementById('f_flipSell').value);
+  const qty = Number(document.getElementById('f_flipQty').value) || 0;
+  const profit = (sell - buy) * qty;
+  document.getElementById('flipPreview').innerHTML = `Profit: <span class="amt">${formatGp(profit)}</span>`;
+}
+
+function addFlip() {
+  const name = document.getElementById('f_flipItem').value.trim();
+  const buy = Number(document.getElementById('f_flipBuy').value);
+  const sell = Number(document.getElementById('f_flipSell').value);
+  const qty = Number(document.getElementById('f_flipQty').value);
+  if (!name || !buy || !sell || !qty) return;
+
+  const flips = loadFlips();
+  const key = name.toLowerCase();
+  if (!flips[key]) flips[key] = { displayName: name, entries: [] };
+  flips[key].entries.push({ ts: Date.now(), buy, sell, qty, profit: (sell - buy) * qty });
+  saveFlips(flips);
+
+  document.getElementById('f_flipItem').value = '';
+  document.getElementById('f_flipBuy').value = '';
+  document.getElementById('f_flipSell').value = '';
+  document.getElementById('f_flipQty').value = '1';
+  updateFlipPreview();
+  renderTable();
+  setStatus(`Flip logged for ${name}.`, 'ok');
+}
+
+function openFlipModal(itemName) {
+  const flips = loadFlips();
+  const entry = flips[itemName.toLowerCase()];
+  if (!entry) return;
+
+  document.getElementById('flipModalTitle').textContent = `Flips: ${entry.displayName}`;
+  const sorted = [...entry.entries].sort((a, b) => a.ts - b.ts);
+
+  document.getElementById('flipModalBody').innerHTML = sorted.map(f => `
+    <tr>
+      <td class="text-col">${new Date(f.ts).toLocaleString()}</td>
+      <td>${f.buy.toLocaleString()}</td>
+      <td>${f.sell.toLocaleString()}</td>
+      <td>${f.qty.toLocaleString()}</td>
+      <td class="margin-pos">${formatGp(f.profit)}</td>
+    </tr>
+  `).join('');
+
+  const total = sorted.reduce((sum, f) => sum + f.profit, 0);
+  document.getElementById('flipModalTotal').textContent = formatGp(total);
+  renderLineChart('itemFlipChart', sorted.map(f => ({ x: f.ts, y: f.profit })), formatGp);
+  document.getElementById('flipModal').classList.add('open');
+}
+
+function closeFlipModal() {
+  document.getElementById('flipModal').classList.remove('open');
+}
+
+function populateItemNameList() {
+  document.getElementById('itemNameList').innerHTML =
+    rows.map(r => `<option value="${r.name.replace(/"/g, '&quot;')}"></option>`).join('');
+}
+
+async function fetchAndRender() {
+  setStatus('Fetching latest prices, volumes, and item mapping...');
+
+  try {
+    const [pricesRes, volumesRes, mapping] = await Promise.all([
+      fetchJson(API.prices),
+      fetchJson(API.volumes),
+      fetchJson(API.mapping)
+    ]);
+
+    const mapById = new Map(mapping.map(m => [String(m.id), m]));
+    const volumeById = volumesRes.data;
+    const priceData = pricesRes.data;
+
+    const minLimit = Number(document.getElementById('f_minLimit').value);
+    const minPrice = Number(document.getElementById('f_minPrice').value);
+    const maxPrice = Number(document.getElementById('f_maxPrice').value);
+    const minFourHrVolumeGp = Number(document.getElementById('f_minFourHrVolumeGp').value) * 1_000_000;
+    const minMargin = Number(document.getElementById('f_minMargin').value);
+    const maxMarginPct = Number(document.getElementById('f_maxMarginPct').value);
+    const maxAgeSec = Number(document.getElementById('f_maxAgeMin').value) * 60;
+    const nowSec = Date.now() / 1000;
+
+    const result = [];
+
+    for (const [itemId, info] of Object.entries(priceData)) {
+      if (!info) continue;
+      const rawHigh = info.high;
+      const rawLow = info.low;
+      const rawHighTime = info.highTime;
+      const rawLowTime = info.lowTime;
+      if (rawHigh == null || rawLow == null || rawHighTime == null || rawLowTime == null) continue;
+
+      // Normalize so "buy" is always the lower price and "sell" the higher one,
+      // then nudge 1gp toward the middle to reflect an achievable flip.
+      let buyRaw, sellRaw, buyTime, sellTime;
+      if (rawLow <= rawHigh) {
+        buyRaw = rawLow; buyTime = rawLowTime;
+        sellRaw = rawHigh; sellTime = rawHighTime;
+      } else {
+        buyRaw = rawHigh; buyTime = rawHighTime;
+        sellRaw = rawLow; sellTime = rawLowTime;
+      }
+      const buyPrice = buyRaw + 1;
+      const sellPrice = sellRaw - 1;
+
+      const volume = Number(volumeById[itemId] || 0);
+      const item = mapById.get(itemId) || {};
+      const buyLimit = item.limit || 0;
+
+      if (buyLimit < minLimit) continue;
+      if (buyPrice < minPrice || buyPrice > maxPrice) continue;
+      if (sellPrice < minPrice || sellPrice > maxPrice) continue;
+      if ((nowSec - buyTime) > maxAgeSec) continue;
+      if ((nowSec - sellTime) > maxAgeSec) continue;
+
+      const margin = sellPrice - buyPrice;
+      if (margin < minMargin) continue;
+      const marginPct = buyPrice > 0 ? (margin / buyPrice) * 100 : 0;
+      if (marginPct > maxMarginPct) continue;
+
+      const avgPrice = (sellPrice + buyPrice) / 2;
+      const buyLimitGp = buyLimit * buyPrice;
+      const dailyVolumeGp = avgPrice * volume;
+      const fourHrVolumeGp = Math.min(dailyVolumeGp / 6, buyLimitGp);
+      if (fourHrVolumeGp < minFourHrVolumeGp) continue;
+
+      const fourHrVolume = Math.min(buyLimit, volume / 6);
+
+      result.push({
+        name: item.name || `Item ${itemId}`,
+        buyPrice,
+        sellPrice,
+        marginPct,
+        buyLimitGp,
+        dailyVolumeGp,
+        fourHrProfit: fourHrVolume * margin,
+        lastBuy: buyTime,
+        lastSell: sellTime
+      });
+    }
+
+    rows = result;
+    setStatus(`Loaded ${rows.length} items matching filters.`, 'ok');
+    renderTable();
+    populateItemNameList();
+  } catch (err) {
+    console.error(err);
+    setStatus(`Error: ${err.message}`, 'error');
+  }
+}
+
+function renderTable() {
+  const sorted = [...rows].sort((a, b) => {
+    const av = a[sortKey], bv = b[sortKey];
+    if (typeof av === 'string') return sortDir * av.localeCompare(bv);
+    return sortDir * (av - bv);
+  });
+
+  const tbody = document.getElementById('tbody');
+  tbody.innerHTML = sorted.map(r => `
+    <tr>
+      <td class="text-col${hasFlips(r.name) ? ' has-flips' : ''}" data-item="${r.name.replace(/"/g, '&quot;')}">${r.name}</td>
+      <td>${r.buyPrice.toLocaleString()}</td>
+      <td>${r.sellPrice.toLocaleString()}</td>
+      <td>${formatGp(r.buyLimitGp)}</td>
+      <td>${formatGp(r.dailyVolumeGp)}</td>
+      <td>${fmtTime(r.lastBuy)}</td>
+      <td>${fmtTime(r.lastSell)}</td>
+      <td class="margin-pos">${Math.round(r.marginPct)}%</td>
+      <td class="margin-pos">${formatGp(r.fourHrProfit)}</td>
+    </tr>
+  `).join('');
+
+  document.getElementById('rowCount').textContent = `${sorted.length} items shown`;
+
+  document.querySelectorAll('thead th').forEach(th => {
+    const key = th.dataset.key;
+    th.innerHTML = th.textContent.replace(' ▲', '').replace(' ▼', '');
+    if (key === sortKey) {
+      th.innerHTML += sortDir === 1 ? ' ▲' : ' ▼';
+    }
+  });
+}
+
+document.querySelectorAll('thead th').forEach(th => {
+  th.addEventListener('click', () => {
+    const key = th.dataset.key;
+    if (sortKey === key) {
+      sortDir *= -1;
+    } else {
+      sortKey = key;
+      sortDir = -1;
+    }
+    renderTable();
+  });
+});
+
+let debounceHandle = null;
+for (const id of FILTER_IDS) {
+  document.getElementById(id).addEventListener('input', () => {
+    clearTimeout(debounceHandle);
+    debounceHandle = setTimeout(fetchAndRender, 500);
+  });
+}
+
+setInterval(fetchAndRender, 60_000);
+
+document.getElementById('tbody').addEventListener('click', (e) => {
+  const td = e.target.closest('td.has-flips');
+  if (td) openFlipModal(td.dataset.item);
+});
+
+document.getElementById('flipModal').addEventListener('click', (e) => {
+  if (e.target.id === 'flipModal') closeFlipModal();
+});
+
+// Load saved defaults (if any), then auto-fetch on load
+loadDefaults();
+fetchAndRender();
+renderWealthPanel();
+updateFlipPreview();
+</script>
+
+</body>
+</html>
