@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <title>RS Grand Exchange Flip Finder</title>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
   :root {
     color-scheme: dark;
@@ -338,12 +339,43 @@
     min-width: 220px;
   }
   .lookup-bar input:focus { outline: none; border-color: var(--accent); }
+
+  .auth-bar {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 12px;
+    margin-bottom: 14px;
+    font-size: 0.82rem;
+  }
+  .sync-status { color: var(--muted); }
+  .sync-status.ok { color: var(--accent2); }
+  .sync-status.error { color: var(--danger); }
+  .auth-btn {
+    background: var(--accent);
+    color: white;
+    border: none;
+    padding: 6px 14px;
+    border-radius: 6px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .auth-btn:hover { background: #4a7ae0; }
+  .auth-btn.signed-in { background: transparent; border: 1px solid var(--border); color: var(--text); }
+  .auth-btn.signed-in:hover { border-color: var(--accent); }
 </style>
 </head>
 <body>
 
 <h1>RS Grand Exchange Flip Finder</h1>
 <div class="subtitle">Live data from <a class="src-link" href="https://prices.runescape.wiki/rs/all-items" target="_blank">prices.runescape.wiki</a> — click a column header to sort.</div>
+
+<div class="auth-bar">
+  <span class="sync-status" id="syncStatus">Not signed in — using local storage only.</span>
+  <button class="auth-btn" id="signInBtn" onclick="handleAuthClick()">Sign in with Google</button>
+</div>
 
 <div class="panel">
   <div class="filters">
@@ -430,7 +462,7 @@
       <table>
         <thead>
           <tr>
-            <th class="text-col">Time (UTC)</th>
+            <th class="text-col">Date/Time (UTC)</th>
             <th class="text-col">Name</th>
             <th>Buy Price</th>
             <th>Sell Price</th>
@@ -479,7 +511,7 @@
         <th data-key="buyPrice">Buy Price</th>
         <th data-key="sellPrice">Sell Price</th>
         <th class="collapse-3" data-key="buyLimitGp">Buy Limit GP</th>
-        <th class="collapse-2" data-key="dailyVolumeGp">Daily Vol GP</th>
+        <th class="collapse-2" data-key="fourHrVolumeGp">4hr Volume GP</th>
         <th class="collapse-1" data-key="lastBuy">Last Buy</th>
         <th class="collapse-1" data-key="lastSell">Last Sell</th>
         <th data-key="marginPct">Margin %</th>
@@ -514,6 +546,7 @@ function saveDefaults() {
     values[id] = document.getElementById(id).value;
   }
   localStorage.setItem(DEFAULTS_KEY, JSON.stringify(values));
+  scheduleDriveSync();
   setStatus('Defaults saved.', 'ok');
 }
 
@@ -616,6 +649,7 @@ function loadWealthLog() {
 
 function saveWealthLog(log) {
   localStorage.setItem(WEALTH_KEY, JSON.stringify(log));
+  scheduleDriveSync();
 }
 
 function addWealthEntry() {
@@ -665,6 +699,7 @@ function loadFlips() {
 
 function saveFlips(flips) {
   localStorage.setItem(FLIPS_KEY, JSON.stringify(flips));
+  scheduleDriveSync();
 }
 
 function hasFlips(name) {
@@ -867,6 +902,7 @@ async function fetchAndRender() {
         marginPct,
         buyLimitGp,
         dailyVolumeGp,
+        fourHrVolumeGp,
         fourHrProfit: fourHrVolume * margin,
         lastBuy: buyTime,
         lastSell: sellTime
@@ -961,7 +997,7 @@ function itemRowHtml(r, kind) {
       <td>${r.buyPrice.toLocaleString()}</td>
       <td>${r.sellPrice.toLocaleString()}</td>
       <td class="collapse-3">${formatGp(r.buyLimitGp)}</td>
-      <td class="collapse-2">${formatGp(r.dailyVolumeGp)}</td>
+      <td class="collapse-2">${formatGp(r.fourHrVolumeGp)}</td>
       <td class="collapse-1">${fmtTime(r.lastBuy)}</td>
       <td class="collapse-1">${fmtTime(r.lastSell)}</td>
       <td class="margin-pos">${Math.round(r.marginPct)}%</td>
@@ -992,6 +1028,7 @@ function loadPinned() {
 
 function savePinned(list) {
   localStorage.setItem(PINNED_KEY, JSON.stringify(list));
+  scheduleDriveSync();
 }
 
 function isPinned(name) {
@@ -1002,13 +1039,53 @@ function togglePin(name) {
   const list = loadPinned();
   const key = name.toLowerCase();
   const idx = list.indexOf(key);
-  if (idx >= 0) list.splice(idx, 1); else list.push(key);
+  if (idx >= 0) {
+    list.splice(idx, 1);
+    pinnedPriceHistory.delete(key);
+    savePinnedPriceHistory();
+  } else {
+    list.push(key);
+  }
   savePinned(list);
   renderTable();
 }
 
+const PRICE_HISTORY_KEY = 'rsGeFlipperPriceHistory';
+const NOTIFICATIONS_KEY = 'rsGeFlipperNotifications';
 const pinnedPriceHistory = new Map(); // lowercase name -> { buy, sell }
 const notifications = []; // newest first, capped at 20
+
+function loadPinnedPriceHistoryFromStorage() {
+  try {
+    const obj = JSON.parse(localStorage.getItem(PRICE_HISTORY_KEY)) || {};
+    pinnedPriceHistory.clear();
+    for (const key of Object.keys(obj)) pinnedPriceHistory.set(key, obj[key]);
+  } catch (err) {
+    console.error('Failed to load pinned price history', err);
+  }
+}
+
+function savePinnedPriceHistory() {
+  const obj = {};
+  for (const [key, val] of pinnedPriceHistory) obj[key] = val;
+  localStorage.setItem(PRICE_HISTORY_KEY, JSON.stringify(obj));
+  scheduleDriveSync();
+}
+
+function loadNotificationsFromStorage() {
+  try {
+    const arr = JSON.parse(localStorage.getItem(NOTIFICATIONS_KEY)) || [];
+    notifications.length = 0;
+    notifications.push(...arr);
+  } catch (err) {
+    console.error('Failed to load saved price alerts', err);
+  }
+}
+
+function saveNotifications() {
+  localStorage.setItem(NOTIFICATIONS_KEY, JSON.stringify(notifications));
+  scheduleDriveSync();
+}
 
 let audioCtx = null;
 function playNotificationSound() {
@@ -1052,14 +1129,19 @@ function checkPinnedPriceChanges() {
     pinnedPriceHistory.set(key, { buy: item.buyPrice, sell: item.sellPrice });
   }
   renderNotifications();
+  savePinnedPriceHistory();
+  if (changed) saveNotifications();
   if (changed) playNotificationSound();
 }
 
 function formatUtcTime(ts) {
   const d = new Date(ts);
+  const yyyy = d.getUTCFullYear();
+  const mo = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(d.getUTCDate()).padStart(2, '0');
   const hh = String(d.getUTCHours()).padStart(2, '0');
   const mm = String(d.getUTCMinutes()).padStart(2, '0');
-  return `${hh}:${mm} UTC`;
+  return `${yyyy}-${mo}-${dd} ${hh}:${mm} UTC`;
 }
 
 function deltaHtml(delta) {
@@ -1106,7 +1188,199 @@ function applyJournalCollapseState() {
 
 function toggleJournalPanel() {
   localStorage.setItem(JOURNAL_COLLAPSE_KEY, String(!loadJournalCollapsed()));
+  scheduleDriveSync();
   applyJournalCollapseState();
+}
+
+// ---- Google Drive sync (appDataFolder) ----
+
+const GOOGLE_CLIENT_ID = '322806416479-c12rv3ntd9uq0fe0kit5mmh7pr88e1ge.apps.googleusercontent.com';
+const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
+const DRIVE_FILENAME = 'rs-ge-flipper-data.json';
+const AUTH_FLAG_KEY = 'rsGeFlipperWasSignedIn';
+
+let gisTokenClient = null;
+let driveAccessToken = null;
+let driveFileId = null;
+let driveSyncDebounce = null;
+let driveSyncInFlight = false;
+let isSilentAuthAttempt = false;
+
+function setSyncStatus(msg, kind) {
+  const el = document.getElementById('syncStatus');
+  el.textContent = msg;
+  el.className = 'sync-status' + (kind ? ' ' + kind : '');
+}
+
+function initGoogleAuth() {
+  if (!window.google || !google.accounts) { setTimeout(initGoogleAuth, 200); return; }
+  gisTokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: GOOGLE_CLIENT_ID,
+    scope: DRIVE_SCOPE,
+    callback: handleTokenResponse
+  });
+  tryAutoSignIn();
+}
+
+function tryAutoSignIn() {
+  if (localStorage.getItem(AUTH_FLAG_KEY) === 'true' && gisTokenClient) {
+    isSilentAuthAttempt = true;
+    gisTokenClient.requestAccessToken({ prompt: '' });
+  }
+}
+
+function handleAuthClick() {
+  if (driveAccessToken) {
+    google.accounts.oauth2.revoke(driveAccessToken, () => {});
+    driveAccessToken = null;
+    driveFileId = null;
+    localStorage.removeItem(AUTH_FLAG_KEY);
+    document.getElementById('signInBtn').textContent = 'Sign in with Google';
+    document.getElementById('signInBtn').classList.remove('signed-in');
+    setSyncStatus('Not signed in — using local storage only.');
+    return;
+  }
+  if (!gisTokenClient) { setSyncStatus('Google sign-in still loading, try again in a moment...', 'error'); return; }
+  gisTokenClient.requestAccessToken({ prompt: 'consent' });
+}
+
+async function handleTokenResponse(resp) {
+  const wasSilent = isSilentAuthAttempt;
+  isSilentAuthAttempt = false;
+  if (resp.error) {
+    if (!wasSilent) setSyncStatus(`Sign-in failed: ${resp.error}`, 'error');
+    return;
+  }
+  driveAccessToken = resp.access_token;
+  localStorage.setItem(AUTH_FLAG_KEY, 'true');
+  document.getElementById('signInBtn').textContent = 'Signed in — Sign out';
+  document.getElementById('signInBtn').classList.add('signed-in');
+  setSyncStatus('Syncing with Google Drive...');
+  await syncFromDriveOnSignIn();
+}
+
+function driveHeaders(extra) {
+  return Object.assign({ 'Authorization': `Bearer ${driveAccessToken}` }, extra || {});
+}
+
+async function driveFindFile() {
+  const url = `https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=${encodeURIComponent(`name='${DRIVE_FILENAME}'`)}&fields=files(id,name)`;
+  const res = await fetch(url, { headers: driveHeaders() });
+  if (!res.ok) throw new Error(`Drive list failed: HTTP ${res.status}`);
+  const json = await res.json();
+  return (json.files && json.files[0]) || null;
+}
+
+async function driveReadFile(fileId) {
+  const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, { headers: driveHeaders() });
+  if (!res.ok) throw new Error(`Drive read failed: HTTP ${res.status}`);
+  return res.json();
+}
+
+async function driveCreateFile(data) {
+  const boundary = 'rsgeflipper_boundary';
+  const metadata = { name: DRIVE_FILENAME, parents: ['appDataFolder'] };
+  const body =
+    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n` +
+    `--${boundary}\r\nContent-Type: application/json\r\n\r\n${JSON.stringify(data)}\r\n` +
+    `--${boundary}--`;
+  const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', {
+    method: 'POST',
+    headers: driveHeaders({ 'Content-Type': `multipart/related; boundary=${boundary}` }),
+    body
+  });
+  if (!res.ok) throw new Error(`Drive create failed: HTTP ${res.status}`);
+  const json = await res.json();
+  return json.id;
+}
+
+async function driveUpdateFile(fileId, data) {
+  const res = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
+    method: 'PATCH',
+    headers: driveHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(data)
+  });
+  if (!res.ok) throw new Error(`Drive update failed: HTTP ${res.status}`);
+}
+
+function collectAllLocalData() {
+  return {
+    defaults: JSON.parse(localStorage.getItem(DEFAULTS_KEY) || 'null'),
+    wealthLog: JSON.parse(localStorage.getItem(WEALTH_KEY) || 'null'),
+    flips: JSON.parse(localStorage.getItem(FLIPS_KEY) || 'null'),
+    pinned: JSON.parse(localStorage.getItem(PINNED_KEY) || 'null'),
+    priceHistory: JSON.parse(localStorage.getItem(PRICE_HISTORY_KEY) || 'null'),
+    notifications: JSON.parse(localStorage.getItem(NOTIFICATIONS_KEY) || 'null'),
+    journalCollapsed: localStorage.getItem(JOURNAL_COLLAPSE_KEY)
+  };
+}
+
+function applyAllLocalData(data) {
+  if (!data) return;
+  if (data.defaults) localStorage.setItem(DEFAULTS_KEY, JSON.stringify(data.defaults));
+  if (data.wealthLog) localStorage.setItem(WEALTH_KEY, JSON.stringify(data.wealthLog));
+  if (data.flips) localStorage.setItem(FLIPS_KEY, JSON.stringify(data.flips));
+  if (data.pinned) localStorage.setItem(PINNED_KEY, JSON.stringify(data.pinned));
+  if (data.priceHistory) localStorage.setItem(PRICE_HISTORY_KEY, JSON.stringify(data.priceHistory));
+  if (data.notifications) localStorage.setItem(NOTIFICATIONS_KEY, JSON.stringify(data.notifications));
+  if (data.journalCollapsed !== undefined && data.journalCollapsed !== null) {
+    localStorage.setItem(JOURNAL_COLLAPSE_KEY, data.journalCollapsed);
+  }
+  loadDefaults();
+  loadPinnedPriceHistoryFromStorage();
+  loadNotificationsFromStorage();
+  applyJournalCollapseState();
+  renderWealthPanel();
+  renderTopEarners();
+  updateFlipPreview();
+  renderNotifications();
+  renderTable();
+  checkPinnedPriceChanges();
+}
+
+async function syncFromDriveOnSignIn() {
+  try {
+    const file = await driveFindFile();
+    if (file) {
+      driveFileId = file.id;
+      const data = await driveReadFile(file.id);
+      applyAllLocalData(data);
+      setSyncStatus('Loaded saved data from Google Drive.', 'ok');
+    } else {
+      const data = collectAllLocalData();
+      driveFileId = await driveCreateFile(data);
+      setSyncStatus('Synced — created new Drive file.', 'ok');
+    }
+  } catch (err) {
+    console.error(err);
+    setSyncStatus(`Drive sync error: ${err.message}`, 'error');
+  }
+}
+
+function scheduleDriveSync() {
+  if (!driveAccessToken) return;
+  clearTimeout(driveSyncDebounce);
+  driveSyncDebounce = setTimeout(pushToDrive, 1500);
+}
+
+async function pushToDrive() {
+  if (!driveAccessToken || driveSyncInFlight) return;
+  driveSyncInFlight = true;
+  setSyncStatus('Syncing...');
+  try {
+    const data = collectAllLocalData();
+    if (!driveFileId) {
+      driveFileId = await driveCreateFile(data);
+    } else {
+      await driveUpdateFile(driveFileId, data);
+    }
+    setSyncStatus('Synced with Google Drive.', 'ok');
+  } catch (err) {
+    console.error(err);
+    setSyncStatus(`Drive sync failed: ${err.message}`, 'error');
+  } finally {
+    driveSyncInFlight = false;
+  }
 }
 
 let debounceHandle = null;
@@ -1132,11 +1406,15 @@ document.getElementById('flipModal').addEventListener('click', (e) => {
 
 // Load saved defaults (if any), then auto-fetch on load
 loadDefaults();
+loadPinnedPriceHistoryFromStorage();
+loadNotificationsFromStorage();
 applyJournalCollapseState();
 fetchAndRender();
 renderWealthPanel();
 updateFlipPreview();
 renderTopEarners();
+renderNotifications();
+initGoogleAuth();
 </script>
 
 </body>
