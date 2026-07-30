@@ -250,6 +250,94 @@
     text-align: right;
   }
   .modal-total .amt { color: var(--accent2); font-weight: 700; }
+  .delete-entry-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--danger);
+    border-radius: 6px;
+    padding: 2px 8px;
+    font-size: 0.72rem;
+    cursor: pointer;
+  }
+  .delete-entry-btn:hover { background: var(--danger); color: white; }
+
+  .delta { font-size: 0.78rem; font-weight: 600; }
+  .delta-pos { color: var(--accent2); }
+  .delta-neg { color: var(--danger); }
+
+  @media (max-width: 1200px) {
+    .collapse-1 { display: none; }
+  }
+  @media (max-width: 1000px) {
+    .collapse-1, .collapse-2 { display: none; }
+  }
+  @media (max-width: 800px) {
+    .collapse-1, .collapse-2, .collapse-3 { display: none; }
+  }
+
+  .panel-header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+  .panel-header-row h2 { margin: 0; }
+  .journal-toggle {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    border-radius: 6px;
+    padding: 3px 10px;
+    font-size: 0.75rem;
+    cursor: pointer;
+  }
+  .journal-toggle:hover { color: var(--text); border-color: var(--accent); }
+  .journal-body.hidden { display: none; }
+
+  .pin-icon {
+    cursor: pointer;
+    opacity: 0.25;
+    filter: grayscale(1);
+    margin-right: 4px;
+    display: inline-block;
+  }
+  .pin-icon:hover { opacity: 0.6; }
+  .pin-icon.pinned { opacity: 1; filter: none; }
+
+  tr.lookup-hit-row { background: rgba(91, 140, 255, 0.16); }
+  tr.lookup-hit-row:hover { background: rgba(91, 140, 255, 0.22); }
+
+  .subpanel {
+    background: #171a22;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+  }
+  .subpanel h3 {
+    font-size: 0.85rem;
+    margin: 0 0 10px 0;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+
+  .lookup-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 4px 2px 10px 2px;
+    flex-wrap: wrap;
+  }
+  .lookup-bar input {
+    background: #11131a;
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 7px 10px;
+    font-size: 0.86rem;
+    min-width: 220px;
+  }
+  .lookup-bar input:focus { outline: none; border-color: var(--accent); }
 </style>
 </head>
 <body>
@@ -273,38 +361,89 @@
   </div>
 </div>
 
-<div class="journal-row">
-  <div class="panel">
-    <h2>Wealth Tracker</h2>
-    <div class="wealth-summary">
-      <div>
-        <div class="stat-label">Latest</div>
-        <div class="stat-value" id="wealthLatest">—</div>
+<div class="panel">
+  <div class="panel-header-row">
+    <h2>Journal</h2>
+    <button class="journal-toggle" id="journalToggleBtn" onclick="toggleJournalPanel()">Show</button>
+  </div>
+  <datalist id="itemNameList"></datalist>
+  <div class="journal-body hidden" id="journalBody">
+    <div class="journal-row">
+      <div class="subpanel">
+        <h3>Wealth Tracker</h3>
+        <div class="wealth-summary">
+          <div>
+            <div class="stat-label">Latest</div>
+            <div class="stat-value" id="wealthLatest">—</div>
+          </div>
+          <div>
+            <div class="stat-label">Change Since Last</div>
+            <div class="stat-value" id="wealthDelta">—</div>
+          </div>
+        </div>
+        <svg id="wealthChart"></svg>
+        <div class="inline-form" style="margin-top:12px;">
+          <div class="field"><label>Current Wealth (gp)</label><input type="number" id="f_wealthValue"></div>
+          <button onclick="addWealthEntry()">Log Wealth</button>
+        </div>
       </div>
-      <div>
-        <div class="stat-label">Change Since Last</div>
-        <div class="stat-value" id="wealthDelta">—</div>
+
+      <div class="subpanel">
+        <h3>Flip Journal</h3>
+        <div class="inline-form">
+          <div class="field"><label>Item Name</label><input type="text" id="f_flipItem" list="itemNameList"></div>
+          <div class="field"><label>Buy Price</label><input type="number" id="f_flipBuy" oninput="updateFlipPreview()"></div>
+          <div class="field"><label>Sell Price</label><input type="number" id="f_flipSell" oninput="updateFlipPreview()"></div>
+          <div class="field"><label>Quantity</label><input type="number" id="f_flipQty" value="1" oninput="updateFlipPreview()"></div>
+          <button onclick="addFlip()">Log Flip</button>
+        </div>
+        <div class="profit-preview" id="flipPreview">Profit: —</div>
       </div>
     </div>
-    <svg id="wealthChart"></svg>
-    <div class="inline-form" style="margin-top:12px;">
-      <div class="field"><label>Current Wealth (gp)</label><input type="number" id="f_wealthValue"></div>
-      <button onclick="addWealthEntry()">Log Wealth</button>
+  </div>
+</div>
+
+<div class="journal-row">
+  <div class="panel">
+    <div class="panel-header-row">
+      <h2 id="topEarnersTitle">Top Earners This Month</h2>
+      <button class="journal-toggle" id="topEarnersRangeBtn" onclick="toggleTopEarnersRange()">Show All</button>
+    </div>
+    <div class="table-wrap" style="max-height:280px;">
+      <table>
+        <thead>
+          <tr>
+            <th class="text-col">Name</th>
+            <th>Net Profit</th>
+          </tr>
+        </thead>
+        <tbody id="topEarnersBody"><tr><td colspan="2" class="empty-note">No flips logged in the past month yet.</td></tr></tbody>
+      </table>
     </div>
   </div>
 
   <div class="panel">
-    <h2>Flip Journal</h2>
-    <datalist id="itemNameList"></datalist>
-    <div class="inline-form">
-      <div class="field"><label>Item Name</label><input type="text" id="f_flipItem" list="itemNameList"></div>
-      <div class="field"><label>Buy Price</label><input type="number" id="f_flipBuy" oninput="updateFlipPreview()"></div>
-      <div class="field"><label>Sell Price</label><input type="number" id="f_flipSell" oninput="updateFlipPreview()"></div>
-      <div class="field"><label>Quantity</label><input type="number" id="f_flipQty" value="1" oninput="updateFlipPreview()"></div>
-      <button onclick="addFlip()">Log Flip</button>
+    <div class="panel-header-row">
+      <h2>Pinned Price Alerts</h2>
     </div>
-    <div class="profit-preview" id="flipPreview">Profit: —</div>
+    <div class="table-wrap" style="max-height:280px;">
+      <table>
+        <thead>
+          <tr>
+            <th class="text-col">Time (UTC)</th>
+            <th class="text-col">Name</th>
+            <th>Buy Price</th>
+            <th>Sell Price</th>
+          </tr>
+        </thead>
+        <tbody id="notificationsBody"><tr><td colspan="4" class="empty-note">No price changes yet for pinned items.</td></tr></tbody>
+      </table>
+    </div>
   </div>
+</div>
+
+<div class="lookup-bar">
+  <input type="text" id="f_itemLookup" list="itemNameList" placeholder="Search any item (shown pinned to top, even if filtered out)…" oninput="handleLookupInput()">
 </div>
 
 <div class="modal-overlay" id="flipModal">
@@ -322,6 +461,7 @@
           <th>Sell</th>
           <th>Qty</th>
           <th>Profit</th>
+          <th></th>
         </tr>
       </thead>
       <tbody id="flipModalBody"></tbody>
@@ -338,10 +478,10 @@
         <th class="text-col" data-key="name">Name</th>
         <th data-key="buyPrice">Buy Price</th>
         <th data-key="sellPrice">Sell Price</th>
-        <th data-key="buyLimitGp">Buy Limit GP</th>
-        <th data-key="dailyVolumeGp">Daily Vol GP</th>
-        <th data-key="lastBuy">Last Buy</th>
-        <th data-key="lastSell">Last Sell</th>
+        <th class="collapse-3" data-key="buyLimitGp">Buy Limit GP</th>
+        <th class="collapse-2" data-key="dailyVolumeGp">Daily Vol GP</th>
+        <th class="collapse-1" data-key="lastBuy">Last Buy</th>
+        <th class="collapse-1" data-key="lastSell">Last Sell</th>
         <th data-key="marginPct">Margin %</th>
         <th data-key="fourHrProfit">4hr Profit</th>
       </tr>
@@ -358,6 +498,7 @@ const API = {
 };
 
 let rows = [];
+let allItemsByName = new Map(); // lowercase name -> row object, unfiltered
 let sortKey = 'fourHrProfit';
 let sortDir = -1; // -1 desc, 1 asc
 
@@ -557,14 +698,60 @@ function addFlip() {
   document.getElementById('f_flipQty').value = '1';
   updateFlipPreview();
   renderTable();
+  renderTopEarners();
   setStatus(`Flip logged for ${name}.`, 'ok');
 }
 
+let topEarnersShowAll = false;
+
+function toggleTopEarnersRange() {
+  topEarnersShowAll = !topEarnersShowAll;
+  renderTopEarners();
+}
+
+function renderTopEarners() {
+  document.getElementById('topEarnersTitle').textContent =
+    topEarnersShowAll ? 'Top Earners (All Time)' : 'Top Earners This Month';
+  document.getElementById('topEarnersRangeBtn').textContent =
+    topEarnersShowAll ? 'Show This Month' : 'Show All';
+
+  const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  const earners = [];
+  for (const entry of Object.values(loadFlips())) {
+    const inRange = topEarnersShowAll ? entry.entries : entry.entries.filter(f => f.ts >= cutoff);
+    if (inRange.length === 0) continue;
+    const net = inRange.reduce((sum, f) => sum + f.profit, 0);
+    earners.push({ name: entry.displayName, net });
+  }
+  earners.sort((a, b) => b.net - a.net);
+
+  const tbody = document.getElementById('topEarnersBody');
+  if (earners.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="2" class="empty-note">No flips logged in this range yet.</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = earners.map(e => `
+    <tr>
+      <td class="text-col has-flips" data-item="${e.name.replace(/"/g, '&quot;')}">${e.name}</td>
+      <td class="${e.net >= 0 ? 'margin-pos' : ''}">${formatGp(e.net)}</td>
+    </tr>
+  `).join('');
+}
+
+document.getElementById('topEarnersBody').addEventListener('click', (e) => {
+  const td = e.target.closest('td.has-flips');
+  if (td) openFlipModal(td.dataset.item);
+});
+
+let currentModalItemKey = null;
+
 function openFlipModal(itemName) {
   const flips = loadFlips();
-  const entry = flips[itemName.toLowerCase()];
+  const key = itemName.toLowerCase();
+  const entry = flips[key];
   if (!entry) return;
 
+  currentModalItemKey = key;
   document.getElementById('flipModalTitle').textContent = `Flips: ${entry.displayName}`;
   const sorted = [...entry.entries].sort((a, b) => a.ts - b.ts);
 
@@ -575,6 +762,7 @@ function openFlipModal(itemName) {
       <td>${f.sell.toLocaleString()}</td>
       <td>${f.qty.toLocaleString()}</td>
       <td class="margin-pos">${formatGp(f.profit)}</td>
+      <td><button class="delete-entry-btn" data-ts="${f.ts}" onclick="deleteFlipEntry(${f.ts})">Delete</button></td>
     </tr>
   `).join('');
 
@@ -584,13 +772,33 @@ function openFlipModal(itemName) {
   document.getElementById('flipModal').classList.add('open');
 }
 
+function deleteFlipEntry(ts) {
+  if (!currentModalItemKey) return;
+  const flips = loadFlips();
+  const entry = flips[currentModalItemKey];
+  if (!entry) return;
+
+  entry.entries = entry.entries.filter(f => f.ts !== ts);
+  if (entry.entries.length === 0) {
+    delete flips[currentModalItemKey];
+    saveFlips(flips);
+    closeFlipModal();
+  } else {
+    saveFlips(flips);
+    openFlipModal(entry.displayName);
+  }
+  renderTable();
+  renderTopEarners();
+}
+
 function closeFlipModal() {
   document.getElementById('flipModal').classList.remove('open');
+  currentModalItemKey = null;
 }
 
 function populateItemNameList() {
   document.getElementById('itemNameList').innerHTML =
-    rows.map(r => `<option value="${r.name.replace(/"/g, '&quot;')}"></option>`).join('');
+    [...allItemsByName.values()].map(r => `<option value="${r.name.replace(/"/g, '&quot;')}"></option>`).join('');
 }
 
 async function fetchAndRender() {
@@ -616,6 +824,7 @@ async function fetchAndRender() {
     const maxAgeSec = Number(document.getElementById('f_maxAgeMin').value) * 60;
     const nowSec = Date.now() / 1000;
 
+    const allItems = new Map();
     const result = [];
 
     for (const [itemId, info] of Object.entries(priceData)) {
@@ -643,26 +852,15 @@ async function fetchAndRender() {
       const item = mapById.get(itemId) || {};
       const buyLimit = item.limit || 0;
 
-      if (buyLimit < minLimit) continue;
-      if (buyPrice < minPrice || buyPrice > maxPrice) continue;
-      if (sellPrice < minPrice || sellPrice > maxPrice) continue;
-      if ((nowSec - buyTime) > maxAgeSec) continue;
-      if ((nowSec - sellTime) > maxAgeSec) continue;
-
-      const margin = sellPrice - buyPrice;
-      if (margin < minMargin) continue;
+      const margin = sellPrice - buyPrice - sellPrice * 0.02; // GE tax: 2% of sell price, can push margin negative
       const marginPct = buyPrice > 0 ? (margin / buyPrice) * 100 : 0;
-      if (marginPct > maxMarginPct) continue;
-
       const avgPrice = (sellPrice + buyPrice) / 2;
       const buyLimitGp = buyLimit * buyPrice;
       const dailyVolumeGp = avgPrice * volume;
       const fourHrVolumeGp = Math.min(dailyVolumeGp / 6, buyLimitGp);
-      if (fourHrVolumeGp < minFourHrVolumeGp) continue;
-
       const fourHrVolume = Math.min(buyLimit, volume / 6);
 
-      result.push({
+      const rowObj = {
         name: item.name || `Item ${itemId}`,
         buyPrice,
         sellPrice,
@@ -672,44 +870,77 @@ async function fetchAndRender() {
         fourHrProfit: fourHrVolume * margin,
         lastBuy: buyTime,
         lastSell: sellTime
-      });
+      };
+
+      allItems.set(rowObj.name.toLowerCase(), rowObj);
+
+      if (buyLimit < minLimit) continue;
+      if (buyPrice < minPrice || buyPrice > maxPrice) continue;
+      if (sellPrice < minPrice || sellPrice > maxPrice) continue;
+      if ((nowSec - buyTime) > maxAgeSec) continue;
+      if ((nowSec - sellTime) > maxAgeSec) continue;
+      if (margin < minMargin) continue;
+      if (marginPct > maxMarginPct) continue;
+      if (fourHrVolumeGp < minFourHrVolumeGp) continue;
+
+      result.push(rowObj);
     }
 
+    allItemsByName = allItems;
     rows = result;
     setStatus(`Loaded ${rows.length} items matching filters.`, 'ok');
     renderTable();
     populateItemNameList();
+    checkPinnedPriceChanges();
   } catch (err) {
     console.error(err);
     setStatus(`Error: ${err.message}`, 'error');
   }
 }
 
-function renderTable() {
+function buildCombinedRows() {
+  const seen = new Set();
+  const combined = [];
+
+  const searchName = document.getElementById('f_itemLookup').value.trim();
+  if (searchName) {
+    const hit = allItemsByName.get(searchName.toLowerCase());
+    if (hit) {
+      combined.push({ row: hit, kind: 'search' });
+      seen.add(hit.name.toLowerCase());
+    }
+  }
+
+  for (const key of loadPinned()) {
+    if (seen.has(key)) continue;
+    const item = allItemsByName.get(key);
+    if (item) {
+      combined.push({ row: item, kind: 'pinned' });
+      seen.add(key);
+    }
+  }
+
   const sorted = [...rows].sort((a, b) => {
     const av = a[sortKey], bv = b[sortKey];
     if (typeof av === 'string') return sortDir * av.localeCompare(bv);
     return sortDir * (av - bv);
   });
+  for (const r of sorted) {
+    const key = r.name.toLowerCase();
+    if (seen.has(key)) continue;
+    combined.push({ row: r, kind: 'normal' });
+    seen.add(key);
+  }
 
-  const tbody = document.getElementById('tbody');
-  tbody.innerHTML = sorted.map(r => `
-    <tr>
-      <td class="text-col${hasFlips(r.name) ? ' has-flips' : ''}" data-item="${r.name.replace(/"/g, '&quot;')}">${r.name}</td>
-      <td>${r.buyPrice.toLocaleString()}</td>
-      <td>${r.sellPrice.toLocaleString()}</td>
-      <td>${formatGp(r.buyLimitGp)}</td>
-      <td>${formatGp(r.dailyVolumeGp)}</td>
-      <td>${fmtTime(r.lastBuy)}</td>
-      <td>${fmtTime(r.lastSell)}</td>
-      <td class="margin-pos">${Math.round(r.marginPct)}%</td>
-      <td class="margin-pos">${formatGp(r.fourHrProfit)}</td>
-    </tr>
-  `).join('');
+  return combined;
+}
 
-  document.getElementById('rowCount').textContent = `${sorted.length} items shown`;
+function renderTable() {
+  const combined = buildCombinedRows();
+  document.getElementById('tbody').innerHTML = combined.map(c => itemRowHtml(c.row, c.kind)).join('');
+  document.getElementById('rowCount').textContent = `${rows.length} items shown`;
 
-  document.querySelectorAll('thead th').forEach(th => {
+  document.querySelectorAll('#dataTable thead th[data-key]').forEach(th => {
     const key = th.dataset.key;
     th.innerHTML = th.textContent.replace(' ▲', '').replace(' ▼', '');
     if (key === sortKey) {
@@ -718,7 +949,28 @@ function renderTable() {
   });
 }
 
-document.querySelectorAll('thead th').forEach(th => {
+function itemRowHtml(r, kind) {
+  const pinned = isPinned(r.name);
+  const safeName = r.name.replace(/"/g, '&quot;');
+  const rowClass = kind === 'search' ? ' class="lookup-hit-row"' : '';
+  return `
+    <tr${rowClass}>
+      <td class="text-col${hasFlips(r.name) ? ' has-flips' : ''}" data-item="${safeName}">
+        <span class="pin-icon${pinned ? ' pinned' : ''}" data-item="${safeName}" title="${pinned ? 'Unpin' : 'Pin'}">📌</span>${r.name}
+      </td>
+      <td>${r.buyPrice.toLocaleString()}</td>
+      <td>${r.sellPrice.toLocaleString()}</td>
+      <td class="collapse-3">${formatGp(r.buyLimitGp)}</td>
+      <td class="collapse-2">${formatGp(r.dailyVolumeGp)}</td>
+      <td class="collapse-1">${fmtTime(r.lastBuy)}</td>
+      <td class="collapse-1">${fmtTime(r.lastSell)}</td>
+      <td class="margin-pos">${Math.round(r.marginPct)}%</td>
+      <td class="margin-pos">${formatGp(r.fourHrProfit)}</td>
+    </tr>
+  `;
+}
+
+document.querySelectorAll('#dataTable thead th[data-key]').forEach(th => {
   th.addEventListener('click', () => {
     const key = th.dataset.key;
     if (sortKey === key) {
@@ -731,6 +983,132 @@ document.querySelectorAll('thead th').forEach(th => {
   });
 });
 
+const PINNED_KEY = 'rsGeFlipperPinned';
+
+function loadPinned() {
+  try { return JSON.parse(localStorage.getItem(PINNED_KEY)) || []; }
+  catch { return []; }
+}
+
+function savePinned(list) {
+  localStorage.setItem(PINNED_KEY, JSON.stringify(list));
+}
+
+function isPinned(name) {
+  return loadPinned().includes(name.toLowerCase());
+}
+
+function togglePin(name) {
+  const list = loadPinned();
+  const key = name.toLowerCase();
+  const idx = list.indexOf(key);
+  if (idx >= 0) list.splice(idx, 1); else list.push(key);
+  savePinned(list);
+  renderTable();
+}
+
+const pinnedPriceHistory = new Map(); // lowercase name -> { buy, sell }
+const notifications = []; // newest first, capped at 20
+
+let audioCtx = null;
+function playNotificationSound() {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const ctx = audioCtx;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = 880;
+    gain.gain.setValueAtTime(0.15, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.25);
+  } catch (err) {
+    console.error('Notification sound failed', err);
+  }
+}
+
+function checkPinnedPriceChanges() {
+  let changed = false;
+  for (const key of loadPinned()) {
+    const item = allItemsByName.get(key);
+    if (!item) continue;
+
+    const prev = pinnedPriceHistory.get(key);
+    if (prev && (prev.buy !== item.buyPrice || prev.sell !== item.sellPrice)) {
+      notifications.unshift({
+        ts: Date.now(),
+        name: item.name,
+        buyPrice: item.buyPrice,
+        sellPrice: item.sellPrice,
+        buyDelta: item.buyPrice - prev.buy,
+        sellDelta: item.sellPrice - prev.sell
+      });
+      notifications.length = Math.min(notifications.length, 20);
+      changed = true;
+    }
+    pinnedPriceHistory.set(key, { buy: item.buyPrice, sell: item.sellPrice });
+  }
+  renderNotifications();
+  if (changed) playNotificationSound();
+}
+
+function formatUtcTime(ts) {
+  const d = new Date(ts);
+  const hh = String(d.getUTCHours()).padStart(2, '0');
+  const mm = String(d.getUTCMinutes()).padStart(2, '0');
+  return `${hh}:${mm} UTC`;
+}
+
+function deltaHtml(delta) {
+  if (!delta) return '';
+  const cls = delta > 0 ? 'delta-pos' : 'delta-neg';
+  const sign = delta > 0 ? '+' : '';
+  return ` <span class="delta ${cls}">(${sign}${delta.toLocaleString()})</span>`;
+}
+
+function renderNotifications() {
+  const tbody = document.getElementById('notificationsBody');
+  if (notifications.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="4" class="empty-note">No price changes yet for pinned items.</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = notifications.map(n => `
+    <tr>
+      <td class="text-col">${formatUtcTime(n.ts)}</td>
+      <td class="text-col">${n.name}</td>
+      <td>${n.buyPrice.toLocaleString()}${deltaHtml(n.buyDelta)}</td>
+      <td>${n.sellPrice.toLocaleString()}${deltaHtml(n.sellDelta)}</td>
+    </tr>
+  `).join('');
+}
+
+let lookupDebounceHandle = null;
+function handleLookupInput() {
+  clearTimeout(lookupDebounceHandle);
+  lookupDebounceHandle = setTimeout(renderTable, 300);
+}
+
+const JOURNAL_COLLAPSE_KEY = 'rsGeFlipperJournalCollapse';
+
+function loadJournalCollapsed() {
+  const raw = localStorage.getItem(JOURNAL_COLLAPSE_KEY);
+  return raw === null ? true : raw === 'true'; // minimized by default
+}
+
+function applyJournalCollapseState() {
+  const collapsed = loadJournalCollapsed();
+  document.getElementById('journalBody').classList.toggle('hidden', collapsed);
+  document.getElementById('journalToggleBtn').textContent = collapsed ? 'Show' : 'Hide';
+}
+
+function toggleJournalPanel() {
+  localStorage.setItem(JOURNAL_COLLAPSE_KEY, String(!loadJournalCollapsed()));
+  applyJournalCollapseState();
+}
+
 let debounceHandle = null;
 for (const id of FILTER_IDS) {
   document.getElementById(id).addEventListener('input', () => {
@@ -742,8 +1120,10 @@ for (const id of FILTER_IDS) {
 setInterval(fetchAndRender, 60_000);
 
 document.getElementById('tbody').addEventListener('click', (e) => {
-  const td = e.target.closest('td.has-flips');
-  if (td) openFlipModal(td.dataset.item);
+  const pinIcon = e.target.closest('.pin-icon');
+  if (pinIcon) { togglePin(pinIcon.dataset.item); return; }
+  const nameTd = e.target.closest('td.has-flips');
+  if (nameTd) openFlipModal(nameTd.dataset.item);
 });
 
 document.getElementById('flipModal').addEventListener('click', (e) => {
@@ -752,9 +1132,11 @@ document.getElementById('flipModal').addEventListener('click', (e) => {
 
 // Load saved defaults (if any), then auto-fetch on load
 loadDefaults();
+applyJournalCollapseState();
 fetchAndRender();
 renderWealthPanel();
 updateFlipPreview();
+renderTopEarners();
 </script>
 
 </body>
