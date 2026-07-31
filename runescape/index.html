@@ -531,7 +531,8 @@
 const API = {
   prices: 'https://prices.runescape.wiki/api/v2/rs/latest',
   volumes: 'https://prices.runescape.wiki/api/v2/rs/volumes',
-  mapping: 'https://prices.runescape.wiki/api/v2/rs/mapping'
+  mapping: 'https://prices.runescape.wiki/api/v2/rs/mapping',
+  guidePrice: 'https://api.weirdgloop.org/exchange/history/rs/latest'
 };
 
 let rows = [];
@@ -896,7 +897,6 @@ async function fetchAndRender() {
       const volume = Number(volumeById[itemId] || 0);
       const item = mapById.get(itemId) || {};
       const buyLimit = item.limit || 0;
-      const gePrice = item.value != null ? item.value : null;
 
       const margin = sellPrice - buyPrice - sellPrice * 0.02; // GE tax: 2% of sell price, can push margin negative
       const marginPct = buyPrice > 0 ? (margin / buyPrice) * 100 : 0;
@@ -907,11 +907,12 @@ async function fetchAndRender() {
       const fourHrVolume = Math.min(buyLimit, volume / 6);
 
       const rowObj = {
+        id: itemId,
         name: item.name || `Item ${itemId}`,
         buyPrice,
         sellPrice,
         marginPct,
-        gePrice,
+        gePrice: null,
         buyLimitGp,
         dailyVolumeGp,
         fourHrVolumeGp,
@@ -930,13 +931,26 @@ async function fetchAndRender() {
       if (margin < minMargin) continue;
       if (marginPct > maxMarginPct) continue;
       if (fourHrVolumeGp < minFourHrVolumeGp) continue;
-      if (belowGuidePrice && (gePrice == null || buyPrice >= gePrice)) continue;
 
       result.push(rowObj);
     }
 
     allItemsByName = allItems;
-    rows = result;
+
+    // Fetch true GE guide prices only for the already-filtered result set (the
+    // weirdgloop Exchange API, which mirrors the real in-game guide price, caps
+    // requests at 100 ids each) rather than for every item in the game.
+    setStatus(`Fetching guide prices for ${result.length} matching items...`);
+    const guidePrices = await fetchGuidePrices(result.map(r => r.id));
+    for (const row of result) {
+      const price = guidePrices.get(row.id);
+      row.gePrice = price != null ? price : null;
+    }
+
+    rows = belowGuidePrice
+      ? result.filter(r => r.gePrice != null && r.buyPrice < r.gePrice)
+      : result;
+
     setStatus(`Loaded ${rows.length} items matching filters.`, 'ok');
     renderTable();
     populateItemNameList();
@@ -945,6 +959,30 @@ async function fetchAndRender() {
     console.error(err);
     setStatus(`Error: ${err.message}`, 'error');
   }
+}
+
+// The GE guide price is the actual in-game guide price (as tracked by the
+// wiki's Grand Exchange Market Watch), not the item mapping's static "value"
+// field (which is manually curated and can go badly stale) or a trading
+// average. Batched at 100 ids/request per the API's documented limit.
+async function fetchGuidePrices(itemIds) {
+  const uniqueIds = [...new Set(itemIds)];
+  const guidePrices = new Map();
+  const chunks = [];
+  for (let i = 0; i < uniqueIds.length; i += 100) chunks.push(uniqueIds.slice(i, i + 100));
+
+  await Promise.all(chunks.map(async (chunk) => {
+    try {
+      const json = await fetchJson(`${API.guidePrice}?id=${chunk.join('|')}`);
+      for (const [id, info] of Object.entries(json)) {
+        if (info && typeof info.price === 'number') guidePrices.set(id, info.price);
+      }
+    } catch (err) {
+      console.error('Failed to fetch a batch of guide prices', err);
+    }
+  }));
+
+  return guidePrices;
 }
 
 function buildCombinedRows() {
