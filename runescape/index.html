@@ -387,7 +387,7 @@
     <div class="field"><label>Max Margin %</label><input type="number" id="f_maxMarginPct" value="100"></div>
     <div class="field"><label>Max Age (minutes)</label><input type="number" id="f_maxAgeMin" value="60"></div>
     <div class="field">
-      <label>Buy &lt; GE Guide Price</label>
+      <label>Buy &lt; 24hr Avg Price</label>
       <input type="checkbox" id="f_belowGuidePrice" style="width:auto;">
     </div>
   </div>
@@ -515,7 +515,7 @@
         <th data-key="buyPrice">Buy Price</th>
         <th data-key="sellPrice">Sell Price</th>
         <th class="collapse-3" data-key="buyLimitGp">Buy Limit GP</th>
-        <th class="collapse-3" data-key="gePrice">GE Guide Price</th>
+        <th class="collapse-3" data-key="gePrice">24hr Avg Price</th>
         <th class="collapse-2" data-key="fourHrVolumeGp">4hr Volume GP</th>
         <th class="collapse-1" data-key="lastBuy">Last Buy</th>
         <th class="collapse-1" data-key="lastSell">Last Sell</th>
@@ -531,7 +531,8 @@
 const API = {
   prices: 'https://prices.runescape.wiki/api/v2/rs/latest',
   volumes: 'https://prices.runescape.wiki/api/v2/rs/volumes',
-  mapping: 'https://prices.runescape.wiki/api/v2/rs/mapping'
+  mapping: 'https://prices.runescape.wiki/api/v2/rs/mapping',
+  avg24h: 'https://prices.runescape.wiki/api/v2/rs/24h'
 };
 
 let rows = [];
@@ -846,18 +847,20 @@ function populateItemNameList() {
 }
 
 async function fetchAndRender() {
-  setStatus('Fetching latest prices, volumes, and item mapping...');
+  setStatus('Fetching latest prices, volumes, item mapping, and 24hr averages...');
 
   try {
-    const [pricesRes, volumesRes, mapping] = await Promise.all([
+    const [pricesRes, volumesRes, mapping, avg24hRes] = await Promise.all([
       fetchJson(API.prices),
       fetchJson(API.volumes),
-      fetchJson(API.mapping)
+      fetchJson(API.mapping),
+      fetchJson(API.avg24h)
     ]);
 
     const mapById = new Map(mapping.map(m => [String(m.id), m]));
     const volumeById = volumesRes.data;
     const priceData = pricesRes.data;
+    const avg24hById = avg24hRes.data;
 
     const minLimit = Number(document.getElementById('f_minLimit').value);
     const minPrice = Number(document.getElementById('f_minPrice').value);
@@ -896,7 +899,19 @@ async function fetchAndRender() {
       const volume = Number(volumeById[itemId] || 0);
       const item = mapById.get(itemId) || {};
       const buyLimit = item.limit || 0;
-      const gePrice = item.value != null ? item.value : null;
+
+      // The item mapping's "value" field is a static, rarely-updated wiki value
+      // (can be wildly stale for volatile items), not a live guide price. Use the
+      // 24h trading average from the wiki's price API instead, which tracks real trades.
+      const avg24h = avg24hById[itemId];
+      let gePrice = null;
+      if (avg24h) {
+        const avgHigh = avg24h.avgHighPrice;
+        const avgLow = avg24h.avgLowPrice;
+        if (avgHigh != null && avgLow != null) gePrice = (avgHigh + avgLow) / 2;
+        else if (avgHigh != null) gePrice = avgHigh;
+        else if (avgLow != null) gePrice = avgLow;
+      }
 
       const margin = sellPrice - buyPrice - sellPrice * 0.02; // GE tax: 2% of sell price, can push margin negative
       const marginPct = buyPrice > 0 ? (margin / buyPrice) * 100 : 0;
