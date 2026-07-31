@@ -532,7 +532,7 @@ const API = {
   prices: 'https://prices.runescape.wiki/api/v2/rs/latest',
   volumes: 'https://prices.runescape.wiki/api/v2/rs/volumes',
   mapping: 'https://prices.runescape.wiki/api/v2/rs/mapping',
-  guidePrice: 'https://api.weirdgloop.org/exchange/history/rs/latest'
+  guidePrice: 'https://runescape.wiki/?title=Module:GEPricesByIDs/data.json&action=raw&ctype=application%2Fjson'
 };
 
 let rows = [];
@@ -937,32 +937,17 @@ async function fetchAndRender() {
 
     allItemsByName = allItems;
 
-    // Pinned items and the current item-lookup search result are shown in the
-    // table even when they don't pass the other filters (and so aren't in
-    // `result`) — fetch guide prices for those too, or they'd be stuck at "—".
-    const extraRows = [];
-    for (const key of loadPinned()) {
-      const item = allItems.get(key);
-      if (item) extraRows.push(item);
-    }
-    const searchName = document.getElementById('f_itemLookup').value.trim().toLowerCase();
-    if (searchName) {
-      const hit = allItems.get(searchName);
-      if (hit) extraRows.push(hit);
-    }
-
-    // Fetch true GE guide prices only for items actually shown (the weirdgloop
-    // Exchange API, which mirrors the real in-game guide price, caps requests
-    // at 100 ids each) rather than for every item in the game. Cached per
-    // session, so this only does real work the first time an item is seen.
-    const guidePriceRows = [...result, ...extraRows];
-    const uniqueGuidePriceIds = new Set(guidePriceRows.map(r => r.id));
-    const newIdsCount = [...uniqueGuidePriceIds].filter(id => !guidePriceCache.has(id)).length;
-    if (newIdsCount > 0) setStatus(`Fetching guide prices for ${newIdsCount} new items...`);
-    const guidePrices = await fetchGuidePrices(guidePriceRows.map(r => r.id));
-    for (const row of guidePriceRows) {
-      const price = guidePrices.get(row.id);
-      row.gePrice = price != null ? price : null;
+    // One bulk fetch covers guide prices for every item, so just apply it to
+    // everything rather than tracking which rows are shown via filters vs.
+    // pinning/search.
+    try {
+      const guidePrices = await loadGuidePricesOnce();
+      for (const row of allItems.values()) {
+        const price = guidePrices.get(row.id);
+        row.gePrice = price != null ? price : null;
+      }
+    } catch (err) {
+      console.error('Guide prices unavailable', err);
     }
 
     rows = belowGuidePrice
@@ -982,35 +967,30 @@ async function fetchAndRender() {
 // The GE guide price is the actual in-game guide price (as tracked by the
 // wiki's Grand Exchange Market Watch), not the item mapping's static "value"
 // field (which is manually curated and can go badly stale) or a trading
-// average. Batched at 100 ids/request per the API's documented limit.
-// Guide prices move slowly (they're not live trade data), so once we've
-// fetched an item's guide price this session we never re-fetch it — each
-// item's guide price only ever costs one request, no matter how many times
-// fetchAndRender() runs afterward.
-const guidePriceCache = new Map();
+// average. The wiki publishes this as a single bulk JSON page covering every
+// item, so it's fetched once per session (guide prices barely move within a
+// session) rather than re-requested on every 60s poll.
+let guidePriceCache = null;
+let guidePriceLoadPromise = null;
 
-async function fetchGuidePrices(itemIds) {
-  const uniqueIds = [...new Set(itemIds)];
-  const idsToFetch = uniqueIds.filter(id => !guidePriceCache.has(id));
-  const chunks = [];
-  for (let i = 0; i < idsToFetch.length; i += 100) chunks.push(idsToFetch.slice(i, i + 100));
+function loadGuidePricesOnce() {
+  if (guidePriceCache) return Promise.resolve(guidePriceCache);
+  if (guidePriceLoadPromise) return guidePriceLoadPromise;
 
-  await Promise.all(chunks.map(async (chunk) => {
-    try {
-      const json = await fetchJson(`${API.guidePrice}?id=${chunk.join('|')}`);
-      for (const [id, info] of Object.entries(json)) {
-        if (info && typeof info.price === 'number') guidePriceCache.set(id, info.price);
-      }
-    } catch (err) {
-      console.error('Failed to fetch a batch of guide prices', err);
+  guidePriceLoadPromise = fetchJson(API.guidePrice).then(json => {
+    const map = new Map();
+    for (const [id, price] of Object.entries(json)) {
+      // The bulk file also carries a couple of "%LAST_UPDATE%"-style metadata keys.
+      if (typeof price === 'number' && !id.startsWith('%')) map.set(id, price);
     }
-  }));
+    guidePriceCache = map;
+    return map;
+  }).catch(err => {
+    guidePriceLoadPromise = null; // allow a retry on the next fetchAndRender()
+    throw err;
+  });
 
-  const guidePrices = new Map();
-  for (const id of uniqueIds) {
-    if (guidePriceCache.has(id)) guidePrices.set(id, guidePriceCache.get(id));
-  }
-  return guidePrices;
+  return guidePriceLoadPromise;
 }
 
 function buildCombinedRows() {
