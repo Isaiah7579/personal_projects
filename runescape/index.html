@@ -386,6 +386,10 @@
     <div class="field"><label>Min Margin</label><input type="number" id="f_minMargin" value="1"></div>
     <div class="field"><label>Max Margin %</label><input type="number" id="f_maxMarginPct" value="100"></div>
     <div class="field"><label>Max Age (minutes)</label><input type="number" id="f_maxAgeMin" value="60"></div>
+    <div class="field">
+      <label>Buy &lt; GE Guide Price</label>
+      <input type="checkbox" id="f_belowGuidePrice" style="width:auto;">
+    </div>
   </div>
   <div class="controls-row">
     <button id="saveDefaultsBtn" onclick="saveDefaults()">Save as Default</button>
@@ -511,6 +515,7 @@
         <th data-key="buyPrice">Buy Price</th>
         <th data-key="sellPrice">Sell Price</th>
         <th class="collapse-3" data-key="buyLimitGp">Buy Limit GP</th>
+        <th class="collapse-3" data-key="gePrice">GE Guide Price</th>
         <th class="collapse-2" data-key="fourHrVolumeGp">4hr Volume GP</th>
         <th class="collapse-1" data-key="lastBuy">Last Buy</th>
         <th class="collapse-1" data-key="lastSell">Last Sell</th>
@@ -536,14 +541,15 @@ let sortDir = -1; // -1 desc, 1 asc
 
 const FILTER_IDS = [
   'f_minLimit', 'f_minPrice', 'f_maxPrice', 'f_minFourHrVolumeGp',
-  'f_minMargin', 'f_maxMarginPct', 'f_maxAgeMin'
+  'f_minMargin', 'f_maxMarginPct', 'f_maxAgeMin', 'f_belowGuidePrice'
 ];
 const DEFAULTS_KEY = 'rsGeFlipperDefaults';
 
 function saveDefaults() {
   const values = {};
   for (const id of FILTER_IDS) {
-    values[id] = document.getElementById(id).value;
+    const el = document.getElementById(id);
+    values[id] = el.type === 'checkbox' ? el.checked : el.value;
   }
   localStorage.setItem(DEFAULTS_KEY, JSON.stringify(values));
   scheduleDriveSync();
@@ -556,7 +562,10 @@ function loadDefaults() {
   try {
     const values = JSON.parse(raw);
     for (const id of FILTER_IDS) {
-      if (values[id] !== undefined) document.getElementById(id).value = values[id];
+      if (values[id] === undefined) continue;
+      const el = document.getElementById(id);
+      if (el.type === 'checkbox') el.checked = values[id];
+      else el.value = values[id];
     }
   } catch (err) {
     console.error('Failed to load saved defaults', err);
@@ -857,6 +866,7 @@ async function fetchAndRender() {
     const minMargin = Number(document.getElementById('f_minMargin').value);
     const maxMarginPct = Number(document.getElementById('f_maxMarginPct').value);
     const maxAgeSec = Number(document.getElementById('f_maxAgeMin').value) * 60;
+    const belowGuidePrice = document.getElementById('f_belowGuidePrice').checked;
     const nowSec = Date.now() / 1000;
 
     const allItems = new Map();
@@ -886,6 +896,7 @@ async function fetchAndRender() {
       const volume = Number(volumeById[itemId] || 0);
       const item = mapById.get(itemId) || {};
       const buyLimit = item.limit || 0;
+      const gePrice = item.value != null ? item.value : null;
 
       const margin = sellPrice - buyPrice - sellPrice * 0.02; // GE tax: 2% of sell price, can push margin negative
       const marginPct = buyPrice > 0 ? (margin / buyPrice) * 100 : 0;
@@ -900,6 +911,7 @@ async function fetchAndRender() {
         buyPrice,
         sellPrice,
         marginPct,
+        gePrice,
         buyLimitGp,
         dailyVolumeGp,
         fourHrVolumeGp,
@@ -918,6 +930,7 @@ async function fetchAndRender() {
       if (margin < minMargin) continue;
       if (marginPct > maxMarginPct) continue;
       if (fourHrVolumeGp < minFourHrVolumeGp) continue;
+      if (belowGuidePrice && (gePrice == null || buyPrice >= gePrice)) continue;
 
       result.push(rowObj);
     }
@@ -997,6 +1010,7 @@ function itemRowHtml(r, kind) {
       <td>${r.buyPrice.toLocaleString()}</td>
       <td>${r.sellPrice.toLocaleString()}</td>
       <td class="collapse-3">${formatGp(r.buyLimitGp)}</td>
+      <td class="collapse-3">${r.gePrice != null ? formatGp(r.gePrice) : '—'}</td>
       <td class="collapse-2">${formatGp(r.fourHrVolumeGp)}</td>
       <td class="collapse-1">${fmtTime(r.lastBuy)}</td>
       <td class="collapse-1">${fmtTime(r.lastSell)}</td>
@@ -1263,16 +1277,58 @@ function driveHeaders(extra) {
   return Object.assign({ 'Authorization': `Bearer ${driveAccessToken}` }, extra || {});
 }
 
+// Access tokens from Google Identity Services expire (typically after ~1hr).
+// When a Drive call comes back 401, try a silent (no-prompt) token refresh
+// and replay the request once before giving up.
+function refreshDriveTokenSilently() {
+  return new Promise((resolve) => {
+    if (!gisTokenClient) { resolve(false); return; }
+    const originalCallback = gisTokenClient.callback;
+    isSilentAuthAttempt = true;
+    gisTokenClient.callback = (resp) => {
+      isSilentAuthAttempt = false;
+      gisTokenClient.callback = originalCallback;
+      if (resp.error) { resolve(false); return; }
+      driveAccessToken = resp.access_token;
+      localStorage.setItem(AUTH_FLAG_KEY, 'true');
+      resolve(true);
+    };
+    gisTokenClient.requestAccessToken({ prompt: '' });
+  });
+}
+
+class DriveAuthExpiredError extends Error {}
+
+async function driveRequest(url, { method = 'GET', extraHeaders, body } = {}) {
+  const doFetch = () => fetch(url, { method, headers: driveHeaders(extraHeaders), body });
+  let res = await doFetch();
+  if (res.status === 401) {
+    const refreshed = await refreshDriveTokenSilently();
+    if (refreshed) res = await doFetch();
+    if (res.status === 401) throw new DriveAuthExpiredError('Drive session expired');
+  }
+  return res;
+}
+
+function handleDriveAuthExpired() {
+  driveAccessToken = null;
+  driveFileId = null;
+  localStorage.removeItem(AUTH_FLAG_KEY);
+  document.getElementById('signInBtn').textContent = 'Sign in with Google';
+  document.getElementById('signInBtn').classList.remove('signed-in');
+  setSyncStatus('Signed out — your Google session expired. Sign in again to resume syncing.', 'error');
+}
+
 async function driveFindFile() {
   const url = `https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=${encodeURIComponent(`name='${DRIVE_FILENAME}'`)}&fields=files(id,name)`;
-  const res = await fetch(url, { headers: driveHeaders() });
+  const res = await driveRequest(url);
   if (!res.ok) throw new Error(`Drive list failed: HTTP ${res.status}`);
   const json = await res.json();
   return (json.files && json.files[0]) || null;
 }
 
 async function driveReadFile(fileId) {
-  const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, { headers: driveHeaders() });
+  const res = await driveRequest(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`);
   if (!res.ok) throw new Error(`Drive read failed: HTTP ${res.status}`);
   return res.json();
 }
@@ -1284,9 +1340,9 @@ async function driveCreateFile(data) {
     `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n` +
     `--${boundary}\r\nContent-Type: application/json\r\n\r\n${JSON.stringify(data)}\r\n` +
     `--${boundary}--`;
-  const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', {
+  const res = await driveRequest('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', {
     method: 'POST',
-    headers: driveHeaders({ 'Content-Type': `multipart/related; boundary=${boundary}` }),
+    extraHeaders: { 'Content-Type': `multipart/related; boundary=${boundary}` },
     body
   });
   if (!res.ok) throw new Error(`Drive create failed: HTTP ${res.status}`);
@@ -1295,9 +1351,9 @@ async function driveCreateFile(data) {
 }
 
 async function driveUpdateFile(fileId, data) {
-  const res = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
+  const res = await driveRequest(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
     method: 'PATCH',
-    headers: driveHeaders({ 'Content-Type': 'application/json' }),
+    extraHeaders: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data)
   });
   if (!res.ok) throw new Error(`Drive update failed: HTTP ${res.status}`);
@@ -1338,14 +1394,83 @@ function applyAllLocalData(data) {
   checkPinnedPriceChanges();
 }
 
+// Merges two arrays of objects, deduping by keyFn. Remote entries are loaded
+// first so that any local entry with the same key (e.g. a re-saved edit) wins.
+function mergeByKey(localArr, remoteArr, keyFn) {
+  const map = new Map();
+  for (const item of (remoteArr || [])) map.set(keyFn(item), item);
+  for (const item of (localArr || [])) map.set(keyFn(item), item);
+  return [...map.values()];
+}
+
+function mergeFlips(localFlips, remoteFlips) {
+  const result = {};
+  const keys = new Set([...Object.keys(localFlips || {}), ...Object.keys(remoteFlips || {})]);
+  for (const key of keys) {
+    const l = (localFlips || {})[key];
+    const r = (remoteFlips || {})[key];
+    const displayName = (l && l.displayName) || (r && r.displayName);
+    const entries = mergeByKey(
+      l && l.entries, r && r.entries,
+      e => `${e.ts}|${e.buy}|${e.sell}|${e.qty}`
+    ).sort((a, b) => a.ts - b.ts);
+    result[key] = { displayName, entries };
+  }
+  return result;
+}
+
+// Combines data made locally (e.g. while signed out or offline) with the
+// copy already saved to Drive, instead of one silently clobbering the other.
+function mergeAllData(local, remote) {
+  return {
+    defaults: remote.defaults || local.defaults,
+    journalCollapsed: (remote.journalCollapsed !== undefined && remote.journalCollapsed !== null)
+      ? remote.journalCollapsed : local.journalCollapsed,
+    wealthLog: mergeByKey(local.wealthLog, remote.wealthLog, e => e.ts).sort((a, b) => a.ts - b.ts),
+    pinned: [...new Set([...(local.pinned || []), ...(remote.pinned || [])])],
+    notifications: mergeByKey(local.notifications, remote.notifications, n => `${n.ts}|${n.name}`)
+      .sort((a, b) => b.ts - a.ts).slice(0, 20),
+    priceHistory: Object.assign({}, remote.priceHistory, local.priceHistory),
+    flips: mergeFlips(local.flips, remote.flips)
+  };
+}
+
+function localDataHasContent(data) {
+  return !!(
+    (data.wealthLog && data.wealthLog.length) ||
+    (data.pinned && data.pinned.length) ||
+    (data.notifications && data.notifications.length) ||
+    (data.flips && Object.keys(data.flips).length)
+  );
+}
+
 async function syncFromDriveOnSignIn() {
   try {
     const file = await driveFindFile();
     if (file) {
       driveFileId = file.id;
-      const data = await driveReadFile(file.id);
-      applyAllLocalData(data);
-      setSyncStatus('Loaded saved data from Google Drive.', 'ok');
+      const remoteData = await driveReadFile(file.id);
+      const localData = collectAllLocalData();
+
+      if (localDataHasContent(localData) && JSON.stringify(localData) !== JSON.stringify(remoteData)) {
+        const shouldMerge = confirm(
+          'You have journal entries, price alerts, or other data saved locally that isn\'t in your ' +
+          'Google Drive backup (likely made while signed out). Merge local data into your account?\n\n' +
+          'OK = merge local changes in\nCancel = discard local changes and use the Drive copy'
+        );
+        if (shouldMerge) {
+          const merged = mergeAllData(localData, remoteData);
+          applyAllLocalData(merged);
+          await driveUpdateFile(file.id, merged);
+          setSyncStatus('Merged local changes with Google Drive.', 'ok');
+        } else {
+          applyAllLocalData(remoteData);
+          setSyncStatus('Loaded saved data from Google Drive.', 'ok');
+        }
+      } else {
+        applyAllLocalData(remoteData);
+        setSyncStatus('Loaded saved data from Google Drive.', 'ok');
+      }
     } else {
       const data = collectAllLocalData();
       driveFileId = await driveCreateFile(data);
@@ -1353,7 +1478,11 @@ async function syncFromDriveOnSignIn() {
     }
   } catch (err) {
     console.error(err);
-    setSyncStatus(`Drive sync error: ${err.message}`, 'error');
+    if (err instanceof DriveAuthExpiredError) {
+      handleDriveAuthExpired();
+    } else {
+      setSyncStatus(`Drive sync error: ${err.message}`, 'error');
+    }
   }
 }
 
@@ -1377,7 +1506,11 @@ async function pushToDrive() {
     setSyncStatus('Synced with Google Drive.', 'ok');
   } catch (err) {
     console.error(err);
-    setSyncStatus(`Drive sync failed: ${err.message}`, 'error');
+    if (err instanceof DriveAuthExpiredError) {
+      handleDriveAuthExpired();
+    } else {
+      setSyncStatus(`Drive sync failed: ${err.message}`, 'error');
+    }
   } finally {
     driveSyncInFlight = false;
   }
