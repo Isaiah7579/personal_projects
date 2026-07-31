@@ -937,12 +937,27 @@ async function fetchAndRender() {
 
     allItemsByName = allItems;
 
-    // Fetch true GE guide prices only for the already-filtered result set (the
-    // weirdgloop Exchange API, which mirrors the real in-game guide price, caps
-    // requests at 100 ids each) rather than for every item in the game.
-    setStatus(`Fetching guide prices for ${result.length} matching items...`);
-    const guidePrices = await fetchGuidePrices(result.map(r => r.id));
-    for (const row of result) {
+    // Pinned items and the current item-lookup search result are shown in the
+    // table even when they don't pass the other filters (and so aren't in
+    // `result`) — fetch guide prices for those too, or they'd be stuck at "—".
+    const extraRows = [];
+    for (const key of loadPinned()) {
+      const item = allItems.get(key);
+      if (item) extraRows.push(item);
+    }
+    const searchName = document.getElementById('f_itemLookup').value.trim().toLowerCase();
+    if (searchName) {
+      const hit = allItems.get(searchName);
+      if (hit) extraRows.push(hit);
+    }
+
+    // Fetch true GE guide prices only for items actually shown (the weirdgloop
+    // Exchange API, which mirrors the real in-game guide price, caps requests
+    // at 100 ids each) rather than for every item in the game.
+    const guidePriceRows = [...result, ...extraRows];
+    setStatus(`Fetching guide prices for ${guidePriceRows.length} shown items...`);
+    const guidePrices = await fetchGuidePrices(guidePriceRows.map(r => r.id));
+    for (const row of guidePriceRows) {
       const price = guidePrices.get(row.id);
       row.gePrice = price != null ? price : null;
     }
