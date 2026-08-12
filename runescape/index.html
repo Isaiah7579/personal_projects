@@ -128,6 +128,10 @@
   tbody td.text-col { text-align: left; font-weight: 500; }
   tbody tr:hover { background: var(--row-hover); }
   .margin-pos { color: var(--accent2); }
+  .margin-neg { color: var(--danger); }
+  .pending-cell { color: var(--muted); }
+  a.item-link { color: inherit; text-decoration: none; }
+  a.item-link:hover { color: var(--accent); text-decoration: underline; }
   .row-count {
     color: var(--muted);
     font-size: 0.8rem;
@@ -521,17 +525,22 @@
         <th class="collapse-1" data-key="lastSell">Last Sell</th>
         <th data-key="marginPct">Margin %</th>
         <th data-key="fourHrProfit">4hr Profit</th>
+        <th class="collapse-2" data-key="slowBuy4h" title="Sum of instasell volume in the past 4h — units you could have bought if you'd held a resting buy offer the whole window">Slow Buys (4h)</th>
+        <th class="collapse-2" data-key="slowSell4h" title="Units actually sellable in the past 4h, walking buckets oldest-to-newest and only counting an instabuy fill against inventory built up from buys in that or an earlier bucket — you can't sell what you haven't bought yet">Slow Sells (4h)</th>
+        <th data-key="profit4h" title="Walks the past 4h bucket-by-bucket: buys add to a running inventory (cost = instasell price × volume), sells are capped by that inventory and only count instabuy fills you'd actually have stock for (revenue = instabuy price × sold volume × 0.98 tax). Still an upper bound — assumes every fill within those caps went to you.">4h Profit (Actual)</th>
       </tr>
     </thead>
     <tbody id="tbody"></tbody>
   </table>
 </div>
+<div class="row-count" id="enrichStatus"></div>
 
 <script>
 const API = {
   prices: 'https://prices.runescape.wiki/api/v2/rs/latest',
   volumes: 'https://prices.runescape.wiki/api/v2/rs/volumes',
   mapping: 'https://prices.runescape.wiki/api/v2/rs/mapping',
+  timeseries: 'https://prices.runescape.wiki/api/v2/rs/timeseries',
   guidePrice: 'https://runescape.wiki/?title=Module:GEPricesByIDs/data.json&action=raw&ctype=application%2Fjson'
 };
 
@@ -881,16 +890,19 @@ async function fetchAndRender() {
       const rawLowTime = info.lowTime;
       if (rawHigh == null || rawLow == null || rawHighTime == null || rawLowTime == null) continue;
 
-      // Normalize so "buy" is always the lower price and "sell" the higher one,
-      // then nudge 1gp toward the middle to reflect an achievable flip.
-      let buyRaw, sellRaw, buyTime, sellTime;
-      if (rawLow <= rawHigh) {
-        buyRaw = rawLow; buyTime = rawLowTime;
-        sellRaw = rawHigh; sellTime = rawHighTime;
-      } else {
-        buyRaw = rawHigh; buyTime = rawHighTime;
-        sellRaw = rawLow; sellTime = rawLowTime;
-      }
+      // A flipper buys near the instasell price (low) and sells near the
+      // instabuy price (high), so low/high map directly to buy/sell — no
+      // swapping. If low > high the quote is crossed, which in practice
+      // almost always means one side is stale (e.g. an instasell price that
+      // hasn't updated in hours) rather than a real trading opportunity.
+      // Treat it as bad data rather than "repairing" it by swapping the
+      // labels, which used to manufacture a fake fat margin. The item still
+      // gets built and added to allItems below so it's reachable via search
+      // and pinning (to spot exactly this kind of stale-quote situation),
+      // it's just excluded from the main filtered table further down.
+      const isCrossed = rawLow > rawHigh;
+      const buyRaw = rawLow, buyTime = rawLowTime;
+      const sellRaw = rawHigh, sellTime = rawHighTime;
       const buyPrice = buyRaw + 1;
       const sellPrice = sellRaw - 1;
 
@@ -913,16 +925,21 @@ async function fetchAndRender() {
         sellPrice,
         marginPct,
         gePrice: null,
+        buyLimit,
         buyLimitGp,
         dailyVolumeGp,
         fourHrVolumeGp,
         fourHrProfit: fourHrVolume * margin,
         lastBuy: buyTime,
-        lastSell: sellTime
+        lastSell: sellTime,
+        slowBuy4h: null,
+        slowSell4h: null,
+        profit4h: null
       };
 
       allItems.set(rowObj.name.toLowerCase(), rowObj);
 
+      if (isCrossed) continue; // stale/bad quote — searchable, but never in the main table
       if (buyLimit < minLimit) continue;
       if (buyPrice < minPrice || buyPrice > maxPrice) continue;
       if (sellPrice < minPrice || sellPrice > maxPrice) continue;
@@ -958,10 +975,161 @@ async function fetchAndRender() {
     renderTable();
     populateItemNameList();
     checkPinnedPriceChanges();
+    kickEnrichmentQueue();
   } catch (err) {
     console.error(err);
     setStatus(`Error: ${err.message}`, 'error');
   }
+}
+
+// ---- Historical 4h enrichment (per-item timeseries, rate-limited) ----
+//
+// The bulk endpoints (latest/volumes/mapping) only give one 24h volume
+// number per item, no distribution over time. To get a real "how much would
+// have actually filled against me in the last 4 hours" number, we walk the
+// currently-displayed row order (top of the table down — i.e. the best
+// candidates by the cheap heuristic get enriched first) and fetch each
+// item's 6h timeseries one at a time, rate-limited so we don't hammer the
+// free public API. Results are cached per item (buckets only update every
+// ~5min, so re-fetching faster than that is pointless) and survive across
+// the 60s auto-refresh.
+
+const ENRICH_DELAY_MS = 200; // ~5 req/s ceiling against prices.runescape.wiki
+const ENRICH_TTL_MS = 4 * 60 * 1000;
+const enrichmentById = new Map(); // itemId -> { slowBuy4h, slowSell4h, profit4h, ts }
+let enrichGeneration = 0;
+let enrichDirty = false;
+
+function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+
+function applyEnrichment(row, enrichment) {
+  row.slowBuy4h = enrichment.slowBuy4h;
+  row.slowSell4h = enrichment.slowSell4h;
+  row.profit4h = enrichment.profit4h;
+}
+
+// "Slow" buys/sells: not an instabuy/instasell, but volume that would have
+// filled against a resting offer we'd parked at the market over the window.
+// slowBuy4h = total instasell volume in the last 4h (units we could have
+// bought by sitting on a buy offer — unconstrained, since buying doesn't
+// need prior inventory). slowSell4h is walked bucket-by-bucket, oldest to
+// newest, against FIFO inventory lots built up from buys: an instabuy fill
+// only counts as a sell we could have made if we'd already bought enough
+// stock in that bucket or an earlier one. This forbids selling ahead of
+// buying, so profit4h can't just be "biggest number in each column" — it's
+// a plausible sequence.
+//
+// profit4h only recognizes *realized* profit: the cost side is the FIFO
+// cost basis of whatever was actually matched to a sale, not the cost of
+// everything bought. Any leftover unsold lots at the end of the window are
+// excluded entirely — they're inventory you're still holding, not a loss,
+// so they shouldn't drag profit4h negative just because the 4h window cut
+// off before you got to sell them. Still an upper bound: assumes every
+// fill within those caps went to us, which real queue position never
+// guarantees.
+//
+// Buys are also capped at the item's real GE buy limit (units per 4h) — a
+// single account physically cannot have bought more than that in the
+// window, no matter how much instasell volume actually traded. Without
+// this cap, high-volume items can report profit built on buying far more
+// than any one account could (e.g. Eternal magic logs matched 42k+ units
+// in one sample against a 25k limit).
+function computeEnrichment(seriesData, buyLimit) {
+  const cutoffSec = Date.now() / 1000 - 4 * 3600;
+  const buckets = seriesData
+    .filter(b => b.timestamp >= cutoffSec)
+    .slice()
+    .sort((a, b) => a.timestamp - b.timestamp);
+
+  let realizedCost = 0, sellRevenue = 0, slowBuy4h = 0, slowSell4h = 0;
+  const lots = []; // FIFO queue of { qty, unitCost }, oldest buy first
+  const cap = Number.isFinite(buyLimit) && buyLimit > 0 ? buyLimit : Infinity;
+
+  for (const bucket of buckets) {
+    if (bucket.avgLowPrice != null && bucket.lowPriceVolume) {
+      const room = Math.max(0, cap - slowBuy4h);
+      const buyQty = Math.min(bucket.lowPriceVolume, room);
+      if (buyQty > 0) {
+        lots.push({ qty: buyQty, unitCost: bucket.avgLowPrice });
+        slowBuy4h += buyQty;
+      }
+      // volume beyond `room` is real instasell activity we simply couldn't
+      // have participated in — a single account has no more buy limit left.
+    }
+    if (bucket.avgHighPrice != null && bucket.highPriceVolume) {
+      let remaining = bucket.highPriceVolume;
+      while (remaining > 0 && lots.length > 0) {
+        const lot = lots[0];
+        const take = Math.min(remaining, lot.qty);
+        sellRevenue += bucket.avgHighPrice * take;
+        realizedCost += lot.unitCost * take;
+        slowSell4h += take;
+        lot.qty -= take;
+        remaining -= take;
+        if (lot.qty === 0) lots.shift();
+      }
+      // any remaining > 0 here means more instabuy fills than we had
+      // inventory for — correctly skipped, not counted as a sale.
+    }
+  }
+
+  return {
+    slowBuy4h,
+    slowSell4h,
+    profit4h: sellRevenue * 0.98 - realizedCost,
+    ts: Date.now()
+  };
+}
+
+let enrichRenderInterval = null;
+
+function kickEnrichmentQueue() {
+  enrichGeneration += 1;
+  runEnrichmentQueue(enrichGeneration);
+  if (!enrichRenderInterval) {
+    enrichRenderInterval = setInterval(() => {
+      if (enrichDirty) { enrichDirty = false; renderTable(); }
+    }, 500);
+  }
+}
+
+async function runEnrichmentQueue(generation) {
+  const targets = buildCombinedRows().map(c => c.row);
+  let done = 0;
+
+  for (const row of targets) {
+    if (generation !== enrichGeneration) return; // a newer refresh/queue superseded this one
+
+    const cached = enrichmentById.get(row.id);
+    if (cached && (Date.now() - cached.ts) < ENRICH_TTL_MS) {
+      applyEnrichment(row, cached);
+      done++;
+      continue;
+    }
+
+    try {
+      const json = await fetchJson(`${API.timeseries}?id=${row.id}&lookback=6h`);
+      const enrichment = computeEnrichment(json.data || [], row.buyLimit);
+      enrichmentById.set(row.id, enrichment);
+      applyEnrichment(row, enrichment);
+    } catch (err) {
+      console.error(`4h enrichment failed for ${row.name}`, err);
+    }
+    done++;
+    enrichDirty = true;
+    setEnrichStatus(`Enriched ${done}/${targets.length} items with 4h history...`);
+    await sleep(ENRICH_DELAY_MS);
+  }
+
+  if (generation === enrichGeneration) {
+    enrichDirty = true;
+    setEnrichStatus(`Enriched ${done}/${targets.length} items with 4h history.`);
+  }
+}
+
+function setEnrichStatus(msg) {
+  const el = document.getElementById('enrichStatus');
+  if (el) el.textContent = msg;
 }
 
 // The GE guide price is the actual in-game guide price (as tracked by the
@@ -993,6 +1161,18 @@ function loadGuidePricesOnce() {
   return guidePriceLoadPromise;
 }
 
+// Sorts nulls (enrichment data not fetched yet) to the bottom regardless of
+// sort direction, instead of NaN-poisoning the comparison.
+function compareValues(av, bv, dir) {
+  const aNull = av === null || av === undefined;
+  const bNull = bv === null || bv === undefined;
+  if (aNull && bNull) return 0;
+  if (aNull) return 1;
+  if (bNull) return -1;
+  if (typeof av === 'string') return dir * av.localeCompare(bv);
+  return dir * (av - bv);
+}
+
 function buildCombinedRows() {
   const seen = new Set();
   const combined = [];
@@ -1015,11 +1195,7 @@ function buildCombinedRows() {
     }
   }
 
-  const sorted = [...rows].sort((a, b) => {
-    const av = a[sortKey], bv = b[sortKey];
-    if (typeof av === 'string') return sortDir * av.localeCompare(bv);
-    return sortDir * (av - bv);
-  });
+  const sorted = [...rows].sort((a, b) => compareValues(a[sortKey], b[sortKey], sortDir));
   for (const r of sorted) {
     const key = r.name.toLowerCase();
     if (seen.has(key)) continue;
@@ -1051,7 +1227,7 @@ function itemRowHtml(r, kind) {
   return `
     <tr${rowClass}>
       <td class="text-col${hasFlips(r.name) ? ' has-flips' : ''}" data-item="${safeName}">
-        <span class="pin-icon${pinned ? ' pinned' : ''}" data-item="${safeName}" title="${pinned ? 'Unpin' : 'Pin'}">📌</span>${r.name}
+        <span class="pin-icon${pinned ? ' pinned' : ''}" data-item="${safeName}" title="${pinned ? 'Unpin' : 'Pin'}">📌</span><a class="item-link" href="https://prices.runescape.wiki/rs/item/${r.id}" target="_blank" rel="noopener noreferrer">${r.name}</a>
       </td>
       <td>${r.buyPrice.toLocaleString()}</td>
       <td>${r.sellPrice.toLocaleString()}</td>
@@ -1062,6 +1238,9 @@ function itemRowHtml(r, kind) {
       <td class="collapse-1">${fmtTime(r.lastSell)}</td>
       <td class="margin-pos">${Math.round(r.marginPct)}%</td>
       <td class="margin-pos">${formatGp(r.fourHrProfit)}</td>
+      <td class="collapse-2">${r.slowBuy4h != null ? r.slowBuy4h.toLocaleString() : '<span class="pending-cell">…</span>'}</td>
+      <td class="collapse-2">${r.slowSell4h != null ? r.slowSell4h.toLocaleString() : '<span class="pending-cell">…</span>'}</td>
+      <td class="${r.profit4h == null ? 'pending-cell' : (r.profit4h >= 0 ? 'margin-pos' : 'margin-neg')}">${r.profit4h != null ? formatGp(r.profit4h) : '…'}</td>
     </tr>
   `;
 }
