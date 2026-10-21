@@ -3,7 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <title>RS Grand Exchange Flip Finder</title>
+<!-- Flip Finder disabled for now; the GE Flip Advisor (advisor/) replaces it.
 <script src="https://accounts.google.com/gsi/client" async defer></script>
+-->
+<meta http-equiv="refresh" content="0; url=advisor/">
 <style>
   :root {
     color-scheme: dark;
@@ -372,6 +375,10 @@
 </style>
 </head>
 <body>
+<p style="padding:24px">The Flip Finder is offline for now. Go to the <a href="advisor/">GE Flip Advisor</a>.</p>
+<script>location.replace("advisor/");</script>
+<!-- Flip Finder disabled for now; restore by removing this comment, the notice and redirect above,
+     and the comment and refresh tag around the Google sign-in script in <head>.
 
 <h1>RS Grand Exchange Flip Finder</h1>
 <div class="subtitle">Live data from <a class="src-link" href="https://prices.runescape.wiki/rs/all-items" target="_blank">prices.runescape.wiki</a> — click a column header to sort.</div>
@@ -1775,5 +1782,6 @@ renderNotifications();
 initGoogleAuth();
 </script>
 
+-->
 </body>
 </html>

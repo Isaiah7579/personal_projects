@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GE Flip Advisor</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #14161c;
+    --panel: #1c1f28;
+    --border: #2c3140;
+    --text: #e6e8ef;
+    --muted: #9aa0b0;
+    --accent: #5b8cff;
+    --accent2: #34d399;
+    --danger: #f87171;
+    --row-hover: #232838;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0 auto;
+    max-width: 980px;
+    font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 24px 16px;
+  }
+  h1 { font-size: 1.4rem; margin: 0 0 4px 0; }
+  .subtitle { color: var(--muted); font-size: 0.85rem; margin-bottom: 20px; line-height: 1.5; }
+  a { color: var(--accent); }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 20px;
+    margin-bottom: 18px;
+  }
+  form { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+  label {
+    display: block;
+    font-size: 0.72rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 4px;
+  }
+  .field { width: 300px; max-width: 100%; }
+  .combo { position: relative; }
+  input {
+    width: 100%;
+    background: #11131a;
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 1rem;
+  }
+  input:focus { outline: none; border-color: var(--accent); }
+  button {
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 9px 18px;
+    font-size: 0.95rem;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.5; cursor: default; }
+  #status { color: var(--muted); font-size: 0.85rem; margin-top: 12px; min-height: 1.2em; }
+  #status.error { color: var(--danger); }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+  th, td { padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; }
+  th { color: var(--muted); font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; }
+  th:first-child, td:first-child { text-align: left; }
+  tbody tr:hover { background: var(--row-hover); }
+  tfoot td { font-weight: 600; border-bottom: none; }
+  .profit { color: var(--accent2); }
+  .muted { color: var(--muted); }
+  .fineprint { color: var(--muted); font-size: 0.72rem; line-height: 1.5; margin-top: 48px; opacity: 0.75; }
+  .fineprint a { color: inherit; }
+  details { margin-top: 10px; }
+  summary { cursor: pointer; color: var(--muted); font-size: 0.8rem; }
+  ul.reasons { margin: 6px 0 0 0; padding-left: 18px; color: var(--muted); font-size: 0.8rem; }
+  h2 { font-size: 1rem; margin: 0 0 12px 0; }
+  #lookupResult { margin-top: 14px; line-height: 1.6; }
+  #lookupResult .big { font-size: 1.5rem; font-weight: 600; color: var(--accent2); }
+  #lookupResult .warn { color: var(--danger); font-size: 0.85rem; }
+
+  .suggestions {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    z-index: 10;
+    margin: 4px 0 0 0;
+    padding: 4px 0;
+    list-style: none;
+    background: #11131a;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    max-height: 320px;
+    overflow-y: auto;
+  }
+  .suggestions li {
+    padding: 8px 10px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .suggestions li.active, .suggestions li:hover { background: var(--row-hover); }
+  .suggestions mark { background: none; color: var(--accent); font-weight: 600; }
+  .chevron, .mobile-only { display: none; }
+
+  /* Phones: stack the forms and turn result rows into cards. */
+  @media (max-width: 640px) {
+    body { padding: 16px 12px; }
+    .panel { padding: 14px; }
+    form { flex-direction: column; align-items: stretch; }
+    .field { width: 100%; }
+    button { width: 100%; padding: 11px 18px; }
+    .suggestions { max-height: 380px; }
+    .suggestions li { padding: 11px 12px; }
+    .desktop-only { display: none; }
+    table, tbody, tfoot, tr, td { display: block; }
+    thead { display: none; }
+    tbody tr { padding: 10px 0; border-bottom: 1px solid var(--border); }
+    tbody tr:hover { background: none; }
+    td {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 3px 0;
+      border: none;
+      white-space: normal;
+      text-align: right;
+    }
+    td[data-label]::before { content: attr(data-label); color: var(--muted); text-align: left; }
+    td:first-child { font-weight: 600; font-size: 1rem; padding-bottom: 6px; }
+    td:first-child::before { content: none; }
+    tfoot tr { padding-top: 10px; }
+    tfoot td.empty { display: none; }
+    /* Only quantity and buy price by default; tap a card for cost, sell price and profit. */
+    tr.expandable { cursor: pointer; }
+    tr.expandable td.detail { display: none; }
+    tr.expandable.open td.detail { display: flex; }
+    .chevron { display: inline-block; margin-left: auto; color: var(--muted); transition: transform 0.15s; }
+    tr.open .chevron { transform: rotate(180deg); }
+    .mobile-only { display: block; }
+  }
+</style>
+</head>
+<body>
+
+<h1>GE Flip Advisor</h1>
+<div class="subtitle">
+  Enter your cash stack; get what to buy.
+  <!-- <a href="../">Flip Finder →</a> (Flip Finder disabled for now) -->
+</div>
+
+<div class="panel">
+  <form id="form">
+    <div class="field">
+      <label for="cash">Cash stack</label>
+      <input id="cash" inputmode="decimal" autocomplete="off" placeholder="e.g. 1.5b, 750m, 200000000" required>
+    </div>
+    <button id="go" type="submit">Find flips</button>
+  </form>
+  <div id="status"></div>
+</div>
+
+<div class="panel" id="results" hidden>
+  <div class="muted mobile-only" style="font-size: 0.8rem; margin-bottom: 4px;">Tap an item for cost, sell price and profit.</div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Item</th>
+          <th>Qty</th>
+          <th>Buy at (each)</th>
+          <th>Cost</th>
+          <th>Sell at (each)</th>
+          <th>Profit if filled</th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+      <tfoot id="totals"></tfoot>
+    </table>
+  </div>
+  <details>
+    <summary>Why other items were left out</summary>
+    <ul class="reasons" id="reasons"></ul>
+  </details>
+</div>
+
+<div class="panel">
+  <h2>Sell price lookup</h2>
+  <form id="lookupForm">
+    <div class="field">
+      <label for="item">Item</label>
+      <div class="combo">
+        <input id="item" autocomplete="off" placeholder="Start typing an item name" required
+               role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="suggestions">
+        <ul id="suggestions" class="suggestions" role="listbox" hidden></ul>
+      </div>
+    </div>
+    <button id="lookupBtn" type="submit">Look up</button>
+  </form>
+  <div id="lookupResult"></div>
+</div>
+
+<footer class="fineprint">
+  Place each buy offer at the <em>Buy at</em> price. Once bought, list at the current instabuy − 100k
+  (<em>Sell at</em> is today's value, and what the lookup gives you); re-check and reprice every few hours.
+  "Profit if filled" is after 2% tax and assumes both offers fill at these prices; in backtests, picks like these
+  realized roughly 35–45% of it. Assumes all 8 GE slots are free and your full buy limits are available.
+  Strategy and evidence:
+  <a href="https://github.com/Isaiah7579/personal_projects/blob/main/runescape/RESEARCH.md" target="_blank" rel="noopener">RESEARCH.md</a>.
+  Live data from <a href="https://prices.runescape.wiki/rs/all-items" target="_blank" rel="noopener">prices.runescape.wiki</a>.
+  Not financial advice, even in gp.
+</footer>
+
+<script>
+// Strategy parameters: keep in sync with the `recommended` strategy in backtest_flips.py
+// (minus its 25% per-item cap, which is left to the user here).
+const API = 'https://prices.runescape.wiki/api/v2/rs';
+const OUTBID = 100_000;
+const MIN_BUY_PRICE = 75_000_000;
+const MAX_BUY_PRICE = 500_000_000;
+const MIN_4H_VOLUME_GP = 100_000_000;
+const GE_TAX = 0.02;
+const GE_SLOTS = 8;
+const TOP_N = 20;
+const MAX_QUOTE_AGE_S = 3600;
+const MIN_TRADE_BUCKETS = 6;      // 5m buckets with trades per side, last 24h
+const MAX_DRIFT = 0.10;           // from the 3-day median
+const MAX_VOLUME_SPIKE = 2.0;     // last 24h volume vs prior daily average
+const REQUEST_DELAY_MS = 200;     // ~5 req/s against the free wiki API
+const CASH_KEY = 'rsFlipAdvisorCash';
+
+const $ = id => document.getElementById(id);
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+function formatGp(n) {
+  const abs = Math.abs(n);
+  if (abs >= 1e9) return (n / 1e9).toFixed(2) + 'B';
+  if (abs >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+  if (abs >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+  return Math.round(n).toLocaleString();
+}
+
+function parseCash(text) {
+  const m = text.trim().toLowerCase().replace(/,/g, '').match(/^(\d+(?:\.\d+)?)\s*([kmb])?$/);
+  if (!m) return null;
+  const mult = { k: 1e3, m: 1e6, b: 1e9 }[m[2]] || 1;
+  return Math.floor(parseFloat(m[1]) * mult);
+}
+
+function setStatus(msg, isError) {
+  $('status').textContent = msg;
+  $('status').className = isError ? 'error' : '';
+}
+
+async function fetchJson(path) {
+  const res = await fetch(`${API}/${path}`, { headers: { 'Accept': 'application/json' } });
+  if (!res.ok) throw new Error(`${path} -> HTTP ${res.status}`);
+  return res.json();
+}
+
+const saleTax = price => Math.floor(price * GE_TAX);
+
+// The item mapping is large and static, so it's fetched once and shared by the advisor and the lookup.
+let mappingPromise = null;
+function loadMapping() {
+  if (!mappingPromise) {
+    mappingPromise = fetchJson('mapping').catch(err => { mappingPromise = null; throw err; });
+  }
+  return mappingPromise;
+}
+
+function median(values) {
+  if (!values.length) return null;
+  const s = values.slice().sort((a, b) => a - b);
+  const mid = s.length >> 1;
+  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+}
+
+// Cheap screen on the bulk endpoints: price range, fresh quotes, positive after-tax margin, 4h volume.
+function screen(latest, volumes, mapping, nowSec, reasons) {
+  const metaById = new Map(mapping.map(m => [String(m.id), m]));
+  const out = [];
+  for (const [id, q] of Object.entries(latest)) {
+    if (!q || q.high == null || q.low == null || q.highTime == null || q.lowTime == null) continue;
+    const buyPrice = q.low + OUTBID;
+    const sellPrice = q.high - OUTBID;
+    if (buyPrice < MIN_BUY_PRICE || buyPrice > MAX_BUY_PRICE) continue;  // not counted: most items
+    if (nowSec - Math.min(q.highTime, q.lowTime) > MAX_QUOTE_AGE_S) { reasons.age++; continue; }
+    const margin = sellPrice - buyPrice - saleTax(sellPrice);
+    if (margin <= 0) { reasons.margin++; continue; }
+    const volume4h = (volumes[id] || 0) / 6;
+    if (volume4h * buyPrice <= MIN_4H_VOLUME_GP) { reasons.volume++; continue; }
+    const meta = metaById.get(id) || {};
+    const limit = meta.limit || 0;
+    const maxQty = Math.floor(limit ? Math.min(volume4h, limit) : volume4h);
+    if (maxQty < 1) { reasons.volume++; continue; }
+    out.push({
+      id, name: meta.name || `Item ${id}`, instasell: q.low, instabuy: q.high,
+      buyPrice, sellPrice, margin, maxQty, score: maxQty * margin
+    });
+  }
+  return out.sort((a, b) => b.score - a.score);
+}
+
+// History checks (per-item timeseries): liquidity, drift from 3-day median, volume spike.
+// Returns a rejection reason key, or null if the item passes.
+function historyCheck(c, fiveMin, hourly, nowSec) {
+  const dayAgo = nowSec - 86400;
+  const recent = fiveMin.filter(b => b.timestamp >= dayAgo);
+  const sellBuckets = recent.filter(b => b.avgLowPrice != null && b.lowPriceVolume > 0).length;
+  const buyBuckets = recent.filter(b => b.avgHighPrice != null && b.highPriceVolume > 0).length;
+  if (Math.min(sellBuckets, buyBuckets) < MIN_TRADE_BUCKETS) return 'liquidity';
+
+  // The backtest used the median of 5m buckets; the API only serves 3 days of history at 1h resolution.
+  const threeDaysAgo = nowSec - 3 * 86400;
+  const window = hourly.filter(b => b.timestamp >= threeDaysAgo);
+  const lowMedian = median(window.filter(b => b.avgLowPrice != null).map(b => b.avgLowPrice));
+  const highMedian = median(window.filter(b => b.avgHighPrice != null).map(b => b.avgHighPrice));
+  if ((lowMedian && Math.abs(c.instasell / lowMedian - 1) > MAX_DRIFT) ||
+      (highMedian && Math.abs(c.instabuy / highMedian - 1) > MAX_DRIFT)) return 'drift';
+
+  const volumeOf = b => (b.highPriceVolume || 0) + (b.lowPriceVolume || 0);
+  const last24h = hourly.filter(b => b.timestamp >= dayAgo).reduce((s, b) => s + volumeOf(b), 0);
+  const prior = hourly.filter(b => b.timestamp < dayAgo);
+  if (prior.length) {
+    const priorDays = Math.min(7, (dayAgo - prior[0].timestamp) / 86400);
+    if (priorDays >= 1) {
+      const priorAvg = prior.reduce((s, b) => s + volumeOf(b), 0) / priorDays;
+      if (last24h > MAX_VOLUME_SPIKE * priorAvg) return 'spike';
+    }
+  }
+  return null;
+}
+
+// Bounded knapsack with an offer-count dimension: maximize sum(qty * margin) subject to
+// sum(qty * buyPrice) <= cash and at most GE_SLOTS offers. Costs are rounded up to `unit` gp,
+// so the answer is always affordable. Same algorithm as choose_offers() in backtest_flips.py.
+function chooseOffers(pool, cash) {
+  const unit = Math.max(1_000_000, Math.ceil(cash / 5000));
+  const B = Math.floor(cash / unit);
+  const K = GE_SLOTS;
+  if (B <= 0 || !pool.length) return [];
+  const W = B + 1;
+  let dp = new Float64Array((K + 1) * W);
+  const stages = [];
+  for (const c of pool) {
+    const cost = Math.ceil(c.buyPrice / unit);
+    const qmax = Math.min(c.maxQty, Math.floor(B / cost));
+    let take = null;
+    if (qmax > 0 && c.margin > 0) {
+      const next = dp.slice();
+      take = new Int32Array((K + 1) * W);
+      for (let k = 1; k <= K; k++) {
+        for (let b = cost; b <= B; b++) {
+          let best = next[k * W + b];
+          const qTop = Math.min(qmax, Math.floor(b / cost));
+          for (let q = 1; q <= qTop; q++) {
+            const v = dp[(k - 1) * W + b - q * cost] + q * c.margin;
+            if (v > best) { best = v; take[k * W + b] = q; }
+          }
+          next[k * W + b] = best;
+        }
+      }
+      dp = next;
+    }
+    stages.push({ c, cost, take });
+  }
+  const picks = [];
+  let k = K, b = B;
+  for (let i = stages.length - 1; i >= 0; i--) {
+    const { c, cost, take } = stages[i];
+    const q = take ? take[k * W + b] : 0;
+    if (q) { picks.push({ c, qty: q }); k--; b -= q * cost; }
+  }
+  return picks.reverse();
+}
+
+function render(picks, cash, reasons) {
+  const rows = $('rows');
+  rows.innerHTML = '';
+  let cost = 0, profit = 0;
+  for (const { c, qty } of picks) {
+    cost += qty * c.buyPrice;
+    profit += qty * c.margin;
+    const tr = document.createElement('tr');
+    tr.className = 'expandable';
+    const link = document.createElement('a');
+    link.href = `https://prices.runescape.wiki/rs/item/${c.id}`;
+    link.target = '_blank';
+    link.rel = 'noopener';
+    link.textContent = c.name;
+    const name = document.createElement('td');
+    name.appendChild(link);
+    name.insertAdjacentHTML('beforeend', '<span class="chevron" aria-hidden="true">▾</span>');
+    tr.appendChild(name);
+    // "detail" cells are tucked into a tap-to-open dropdown in the phone card layout.
+    for (const [label, text, cls] of [
+      ['Qty', qty.toLocaleString(), ''],
+      ['Buy at (each)', c.buyPrice.toLocaleString(), ''],
+      ['Cost', formatGp(qty * c.buyPrice), 'detail'],
+      ['Sell at (each)', c.sellPrice.toLocaleString(), 'detail'],
+      ['Profit if filled', formatGp(qty * c.margin), 'detail profit'],
+    ]) {
+      const td = document.createElement('td');
+      td.textContent = text;
+      td.dataset.label = label;  // shown as the row label in the phone card layout
+      if (cls) td.className = cls;
+      tr.appendChild(td);
+    }
+    rows.appendChild(tr);
+  }
+  if (!picks.length) {
+    rows.innerHTML = '<tr><td colspan="6" class="muted">Nothing passes the filters right now. Try again in a while.</td></tr>';
+  }
+  $('totals').innerHTML = picks.length ? `
+    <tr class="expandable"><td>Total<span class="chevron" aria-hidden="true">▾</span></td>
+    <td class="empty"></td><td class="empty"></td><td class="detail" data-label="Cost">${formatGp(cost)}</td>
+    <td class="detail muted" data-label="Cash left">${formatGp(cash - cost)}<span class="desktop-only"> left</span></td>
+    <td class="detail profit" data-label="Profit if filled">${formatGp(profit)}</td></tr>` : '';
+
+  const labels = {
+    age: 'a quote is more than 1 hour old',
+    margin: 'no profit after 2% tax and the 100k outbid',
+    volume: '4h volume under 100M gp (or under one unit)',
+    liquidity: `fewer than ${MIN_TRADE_BUCKETS} trading 5-minute windows per side in 24h`,
+    drift: `price more than ${MAX_DRIFT * 100}% from its 3-day median (possible pump or dump)`,
+    spike: `24h volume more than ${MAX_VOLUME_SPIKE}× its usual daily volume`,
+    failed: 'history request failed',
+  };
+  $('reasons').innerHTML = Object.entries(reasons).filter(([, n]) => n)
+    .map(([k, n]) => `<li>${n} item${n === 1 ? '' : 's'}: ${labels[k]}</li>`).join('') || '<li>none</li>';
+  $('results').hidden = false;
+}
+
+async function run(cash) {
+  $('go').disabled = true;
+  $('results').hidden = true;
+  try {
+    setStatus('Fetching live prices...');
+    const [latest, volumes, mapping] = await Promise.all([
+      fetchJson('latest'), fetchJson('volumes'), loadMapping()
+    ]);
+    const nowSec = Date.now() / 1000;
+    const reasons = { age: 0, margin: 0, volume: 0, liquidity: 0, drift: 0, spike: 0, failed: 0 };
+    const screened = screen(latest.data, volumes.data, mapping, nowSec, reasons);
+
+    // Walk candidates best-first, checking history until TOP_N pass (what the optimizer chooses from).
+    const pool = [];
+    for (let i = 0; i < screened.length && pool.length < TOP_N; i++) {
+      const c = screened[i];
+      setStatus(`Checking price history: ${c.name} (${i + 1}/${screened.length}, ${pool.length} passed)...`);
+      try {
+        const [fiveMin, hourly] = await Promise.all([
+          fetchJson(`timeseries?id=${c.id}&lookback=24h`),
+          fetchJson(`timeseries?id=${c.id}&lookback=7d`),
+        ]);
+        const reason = historyCheck(c, fiveMin.data || [], hourly.data || [], nowSec);
+        if (reason) reasons[reason]++;
+        else pool.push(c);
+      } catch (err) {
+        console.error(c.name, err);
+        reasons.failed++;
+      }
+      await sleep(REQUEST_DELAY_MS * 2);
+    }
+
+    const picks = chooseOffers(pool, cash);
+    render(picks, cash, reasons);
+    setStatus(`${pool.length} items passed all checks; ${picks.length} offer${picks.length === 1 ? '' : 's'} for ` +
+      `${formatGp(cash)}. Prices as of ${new Date().toLocaleTimeString()}.`);
+  } catch (err) {
+    console.error(err);
+    setStatus(`Error: ${err.message}`, true);
+  } finally {
+    $('go').disabled = false;
+  }
+}
+
+// Phone card layout: tapping a card (anywhere but the wiki link) opens its details dropdown.
+for (const section of [$('rows'), $('totals')]) {
+  section.addEventListener('click', e => {
+    const tr = e.target.closest('tr.expandable');
+    if (tr && !e.target.closest('a')) tr.classList.toggle('open');
+  });
+}
+
+$('form').addEventListener('submit', e => {
+  e.preventDefault();
+  const cash = parseCash($('cash').value);
+  if (!cash || cash < MIN_BUY_PRICE) {
+    setStatus(`Enter at least ${formatGp(MIN_BUY_PRICE)} (e.g. 1.5b, 750m).`, true);
+    return;
+  }
+  try { localStorage.setItem(CASH_KEY, $('cash').value); } catch (_) { /* storage unavailable */ }
+  run(cash);
+});
+
+try {
+  const saved = localStorage.getItem(CASH_KEY);
+  if (saved) $('cash').value = saved;
+} catch (_) { /* storage unavailable */ }
+
+// ---- Sell price lookup: same rule the strategy uses for sell offers (instabuy − outbid) ----
+
+function findItem(mapping, query) {
+  const q = query.trim().toLowerCase();
+  const exact = mapping.find(m => m.name.toLowerCase() === q);
+  if (exact) return { item: exact };
+  const partial = mapping.filter(m => m.name.toLowerCase().includes(q));
+  if (partial.length === 1) return { item: partial[0] };
+  return { matches: partial.length };
+}
+
+function minutesAgo(ts) {
+  const mins = Math.max(0, Math.round((Date.now() / 1000 - ts) / 60));
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.round(mins / 6) / 10;
+  return hours < 48 ? `${hours} h ago` : `${Math.round(hours / 24)} days ago`;
+}
+
+function showLookup(html) {
+  $('lookupResult').innerHTML = html;
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+$('lookupForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  $('lookupBtn').disabled = true;
+  try {
+    const mapping = await loadMapping();
+    const { item, matches } = findItem(mapping, $('item').value);
+    if (!item) {
+      showLookup(`<span class="warn">${matches ? `${matches} items match; pick one from the list.` : 'No item by that name.'}</span>`);
+      return;
+    }
+    showLookup('<span class="muted">Fetching latest price...</span>');
+    const quote = (await fetchJson(`latest?id=${item.id}`)).data[item.id];
+    const name = `<a href="https://prices.runescape.wiki/rs/item/${item.id}" target="_blank" rel="noopener">${escapeHtml(item.name)}</a>`;
+    if (!quote || quote.high == null) {
+      showLookup(`${name}: <span class="warn">no recent instabuy trades to price from.</span>`);
+      return;
+    }
+    // The 100k outbid only makes sense for the expensive items the strategy trades; undercut cheap items by 1gp.
+    const outbid = quote.high >= MIN_BUY_PRICE ? OUTBID : 1;
+    const sellPrice = quote.high - outbid;
+    const net = sellPrice - saleTax(sellPrice);
+    const warnings = [];
+    if (Date.now() / 1000 - quote.highTime > MAX_QUOTE_AGE_S) {
+      warnings.push('The last instabuy trade is over an hour old; the price may have moved.');
+    }
+    if (quote.low != null && quote.low > quote.high) {
+      warnings.push(`Latest instasell (${quote.low.toLocaleString()}) is above instabuy; one side is probably stale.`);
+    }
+    showLookup(`
+      <div>${name}: sell at</div>
+      <div class="big">${sellPrice.toLocaleString()}</div>
+      <div class="muted">Instabuy ${quote.high.toLocaleString()} (${minutesAgo(quote.highTime)}) − ${outbid === 1 ? '1 gp' : formatGp(outbid)}.
+        You receive ${net.toLocaleString()} each after 2% tax.</div>
+      ${warnings.map(w => `<div class="warn">${w}</div>`).join('')}`);
+  } catch (err) {
+    console.error(err);
+    showLookup(`<span class="warn">Error: ${escapeHtml(err.message)}</span>`);
+  } finally {
+    $('lookupBtn').disabled = false;
+  }
+});
+
+// ---- Item autocomplete (a native <datalist> can't be positioned or styled, and on phones it
+// becomes a separate bar above the keyboard) ----
+
+const MAX_SUGGESTIONS = 8;
+let itemNames = [];
+let suggestionMatches = [];
+let activeSuggestion = -1;
+
+loadMapping().then(mapping => {
+  itemNames = mapping.map(m => m.name).sort((a, b) => a.localeCompare(b));
+}).catch(err => console.error('Item list unavailable', err));
+
+function closeSuggestions() {
+  $('suggestions').hidden = true;
+  $('item').setAttribute('aria-expanded', 'false');
+  activeSuggestion = -1;
+}
+
+function renderSuggestions() {
+  const list = $('suggestions');
+  const q = $('item').value.trim().toLowerCase();
+  list.innerHTML = suggestionMatches.map((name, i) => {
+    const at = name.toLowerCase().indexOf(q);
+    const html = escapeHtml(name.slice(0, at)) + '<mark>' + escapeHtml(name.slice(at, at + q.length)) + '</mark>' +
+      escapeHtml(name.slice(at + q.length));
+    return `<li role="option" id="suggestion-${i}" data-index="${i}"` +
+      `${i === activeSuggestion ? ' class="active" aria-selected="true"' : ''}>${html}</li>`;
+  }).join('');
+  list.hidden = !suggestionMatches.length;
+  $('item').setAttribute('aria-expanded', String(!list.hidden));
+  if (activeSuggestion >= 0) {
+    $('item').setAttribute('aria-activedescendant', `suggestion-${activeSuggestion}`);
+    list.children[activeSuggestion].scrollIntoView({ block: 'nearest' });
+  } else {
+    $('item').removeAttribute('aria-activedescendant');
+  }
+}
+
+function chooseSuggestion(index) {
+  $('item').value = suggestionMatches[index];
+  closeSuggestions();
+  $('lookupForm').requestSubmit();
+}
+
+$('item').addEventListener('input', () => {
+  const q = $('item').value.trim().toLowerCase();
+  activeSuggestion = -1;
+  if (q.length < 2) {
+    suggestionMatches = [];
+    closeSuggestions();
+    return;
+  }
+  // Names starting with the query first, then names containing it anywhere.
+  const starts = [], contains = [];
+  for (const name of itemNames) {
+    const at = name.toLowerCase().indexOf(q);
+    if (at === 0) starts.push(name);
+    else if (at > 0) contains.push(name);
+  }
+  suggestionMatches = starts.concat(contains).slice(0, MAX_SUGGESTIONS);
+  renderSuggestions();
+});
+
+$('item').addEventListener('keydown', e => {
+  if ($('suggestions').hidden) return;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    const n = suggestionMatches.length;
+    activeSuggestion = e.key === 'ArrowDown' ? (activeSuggestion + 1) % n : (activeSuggestion - 1 + n) % n;
+    renderSuggestions();
+  } else if (e.key === 'Enter' && activeSuggestion >= 0) {
+    e.preventDefault();
+    chooseSuggestion(activeSuggestion);
+  } else if (e.key === 'Escape') {
+    closeSuggestions();
+  }
+});
+
+// mousedown (not click) so the input doesn't blur and close the list before the choice registers.
+$('suggestions').addEventListener('mousedown', e => {
+  const li = e.target.closest('li');
+  if (!li) return;
+  e.preventDefault();
+  chooseSuggestion(Number(li.dataset.index));
+});
+
+$('item').addEventListener('blur', closeSuggestions);
+$('lookupForm').addEventListener('submit', closeSuggestions);
+</script>
+</body>
+</html>
