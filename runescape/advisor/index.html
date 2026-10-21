@@ -78,7 +78,8 @@
   tfoot td { font-weight: 600; border-bottom: none; }
   .profit { color: var(--accent2); }
   .muted { color: var(--muted); }
-  .note { color: var(--muted); font-size: 0.8rem; margin-top: 12px; line-height: 1.5; }
+  .fineprint { color: var(--muted); font-size: 0.72rem; line-height: 1.5; margin-top: 48px; opacity: 0.75; }
+  .fineprint a { color: inherit; }
   details { margin-top: 10px; }
   summary { cursor: pointer; color: var(--muted); font-size: 0.8rem; }
   ul.reasons { margin: 6px 0 0 0; padding-left: 18px; color: var(--muted); font-size: 0.8rem; }
@@ -113,6 +114,7 @@
   }
   .suggestions li.active, .suggestions li:hover { background: var(--row-hover); }
   .suggestions mark { background: none; color: var(--accent); font-weight: 600; }
+  .chevron, .mobile-only { display: none; }
 
   /* Phones: stack the forms and turn result rows into cards. */
   @media (max-width: 640px) {
@@ -142,6 +144,13 @@
     td:first-child::before { content: none; }
     tfoot tr { padding-top: 10px; }
     tfoot td.empty { display: none; }
+    /* Only quantity and buy price by default; tap a card for cost, sell price and profit. */
+    tr.expandable { cursor: pointer; }
+    tr.expandable td.detail { display: none; }
+    tr.expandable.open td.detail { display: flex; }
+    .chevron { display: inline-block; margin-left: auto; color: var(--muted); transition: transform 0.15s; }
+    tr.open .chevron { transform: rotate(180deg); }
+    .mobile-only { display: block; }
   }
 </style>
 </head>
@@ -149,10 +158,7 @@
 
 <h1>GE Flip Advisor</h1>
 <div class="subtitle">
-  Enter your cash stack; get what to buy. Uses the backtested strategy from
-  <a href="https://github.com/Isaiah7579/personal_projects/blob/main/runescape/RESEARCH.md" target="_blank" rel="noopener">RESEARCH.md</a>
-  with live data from <a href="https://prices.runescape.wiki/rs/all-items" target="_blank" rel="noopener">prices.runescape.wiki</a>.
-  Assumes all 8 GE slots are free.
+  Enter your cash stack; get what to buy.
   <!-- <a href="../">Flip Finder →</a> (Flip Finder disabled for now) -->
 </div>
 
@@ -168,6 +174,7 @@
 </div>
 
 <div class="panel" id="results" hidden>
+  <div class="muted mobile-only" style="font-size: 0.8rem; margin-bottom: 4px;">Tap an item for cost, sell price and profit.</div>
   <div class="table-wrap">
     <table>
       <thead>
@@ -183,11 +190,6 @@
       <tbody id="rows"></tbody>
       <tfoot id="totals"></tfoot>
     </table>
-  </div>
-  <div class="note">
-    Place each buy offer at the <em>Buy at</em> price. Once bought, list at the current instabuy − 100k
-    (<em>Sell at</em> is today's value); re-check and reprice every few hours. "Profit if filled" is after 2% tax
-    and assumes both offers fill at these prices; in backtests, picks like these realized roughly 35–45% of it.
   </div>
   <details>
     <summary>Why other items were left out</summary>
@@ -210,6 +212,17 @@
   </form>
   <div id="lookupResult"></div>
 </div>
+
+<footer class="fineprint">
+  Place each buy offer at the <em>Buy at</em> price. Once bought, list at the current instabuy − 100k
+  (<em>Sell at</em> is today's value, and what the lookup gives you); re-check and reprice every few hours.
+  "Profit if filled" is after 2% tax and assumes both offers fill at these prices; in backtests, picks like these
+  realized roughly 35–45% of it. Assumes all 8 GE slots are free and your full buy limits are available.
+  Strategy and evidence:
+  <a href="https://github.com/Isaiah7579/personal_projects/blob/main/runescape/RESEARCH.md" target="_blank" rel="noopener">RESEARCH.md</a>.
+  Live data from <a href="https://prices.runescape.wiki/rs/all-items" target="_blank" rel="noopener">prices.runescape.wiki</a>.
+  Not financial advice, even in gp.
+</footer>
 
 <script>
 // Strategy parameters: keep in sync with the `recommended` strategy in backtest_flips.py
@@ -383,6 +396,7 @@ function render(picks, cash, reasons) {
     cost += qty * c.buyPrice;
     profit += qty * c.margin;
     const tr = document.createElement('tr');
+    tr.className = 'expandable';
     const link = document.createElement('a');
     link.href = `https://prices.runescape.wiki/rs/item/${c.id}`;
     link.target = '_blank';
@@ -390,13 +404,15 @@ function render(picks, cash, reasons) {
     link.textContent = c.name;
     const name = document.createElement('td');
     name.appendChild(link);
+    name.insertAdjacentHTML('beforeend', '<span class="chevron" aria-hidden="true">▾</span>');
     tr.appendChild(name);
+    // "detail" cells are tucked into a tap-to-open dropdown in the phone card layout.
     for (const [label, text, cls] of [
       ['Qty', qty.toLocaleString(), ''],
       ['Buy at (each)', c.buyPrice.toLocaleString(), ''],
-      ['Cost', formatGp(qty * c.buyPrice), ''],
-      ['Sell at (each)', c.sellPrice.toLocaleString(), ''],
-      ['Profit if filled', formatGp(qty * c.margin), 'profit'],
+      ['Cost', formatGp(qty * c.buyPrice), 'detail'],
+      ['Sell at (each)', c.sellPrice.toLocaleString(), 'detail'],
+      ['Profit if filled', formatGp(qty * c.margin), 'detail profit'],
     ]) {
       const td = document.createElement('td');
       td.textContent = text;
@@ -410,9 +426,10 @@ function render(picks, cash, reasons) {
     rows.innerHTML = '<tr><td colspan="6" class="muted">Nothing passes the filters right now. Try again in a while.</td></tr>';
   }
   $('totals').innerHTML = picks.length ? `
-    <tr><td>Total</td><td class="empty"></td><td class="empty"></td><td data-label="Cost">${formatGp(cost)}</td>
-    <td class="muted" data-label="Cash left">${formatGp(cash - cost)}<span class="desktop-only"> left</span></td>
-    <td class="profit" data-label="Profit if filled">${formatGp(profit)}</td></tr>` : '';
+    <tr class="expandable"><td>Total<span class="chevron" aria-hidden="true">▾</span></td>
+    <td class="empty"></td><td class="empty"></td><td class="detail" data-label="Cost">${formatGp(cost)}</td>
+    <td class="detail muted" data-label="Cash left">${formatGp(cash - cost)}<span class="desktop-only"> left</span></td>
+    <td class="detail profit" data-label="Profit if filled">${formatGp(profit)}</td></tr>` : '';
 
   const labels = {
     age: 'a quote is more than 1 hour old',
@@ -470,6 +487,14 @@ async function run(cash) {
   } finally {
     $('go').disabled = false;
   }
+}
+
+// Phone card layout: tapping a card (anywhere but the wiki link) opens its details dropdown.
+for (const section of [$('rows'), $('totals')]) {
+  section.addEventListener('click', e => {
+    const tr = e.target.closest('tr.expandable');
+    if (tr && !e.target.closest('a')) tr.classList.toggle('open');
+  });
 }
 
 $('form').addEventListener('submit', e => {
