@@ -114,7 +114,7 @@
   }
   .suggestions li.active, .suggestions li:hover { background: var(--row-hover); }
   .suggestions mark { background: none; color: var(--accent); font-weight: 600; }
-  .chevron, .mobile-only { display: none; }
+  .chevron, .mobile-only, td.summary { display: none; }
 
   /* Phones: stack the forms and turn result rows into cards. */
   @media (max-width: 640px) {
@@ -148,6 +148,8 @@
     tr.expandable { cursor: pointer; }
     tr.expandable td.detail { display: none; }
     tr.expandable.open td.detail { display: flex; }
+    tr.expandable td.summary { display: block; text-align: left; padding: 2px 0 0 0; }
+    tr.expandable.open td.summary { display: none; }
     .chevron { display: inline-block; margin-left: auto; color: var(--muted); transition: transform 0.15s; }
     tr.open .chevron { transform: rotate(180deg); }
     .mobile-only { display: block; }
@@ -158,23 +160,27 @@
 
 <h1>GE Flip Advisor</h1>
 <div class="subtitle">
-  Enter your cash stack; get what to buy.
+  Enter your cash stack to see what to buy, or an item to see what to sell it for.
   <!-- <a href="../">Flip Finder →</a> (Flip Finder disabled for now) -->
 </div>
 
 <div class="panel">
   <form id="form">
     <div class="field">
-      <label for="cash">Cash stack</label>
-      <input id="cash" inputmode="decimal" autocomplete="off" placeholder="e.g. 1.5b, 750m, 200000000" required>
+      <label for="query">Cash stack or item</label>
+      <div class="combo">
+        <input id="query" autocomplete="off" placeholder="e.g. 1.5b, or an item name" required
+               role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="suggestions">
+        <ul id="suggestions" class="suggestions" role="listbox" hidden></ul>
+      </div>
     </div>
-    <button id="go" type="submit">Find flips</button>
+    <button id="go" type="submit">Go</button>
   </form>
   <div id="status"></div>
 </div>
 
 <div class="panel" id="results" hidden>
-  <div class="muted mobile-only" style="font-size: 0.8rem; margin-bottom: 4px;">Tap an item for cost, sell price and profit.</div>
+  <div class="muted mobile-only" style="font-size: 0.8rem; margin-bottom: 4px;">Tap an item for details.</div>
   <div class="table-wrap">
     <table>
       <thead>
@@ -184,7 +190,7 @@
           <th>Buy at (each)</th>
           <th>Cost</th>
           <th>Sell at (each)</th>
-          <th>Profit if filled</th>
+          <th>Profit</th>
         </tr>
       </thead>
       <tbody id="rows"></tbody>
@@ -197,26 +203,15 @@
   </details>
 </div>
 
-<div class="panel">
-  <h2>Sell price lookup</h2>
-  <form id="lookupForm">
-    <div class="field">
-      <label for="item">Item</label>
-      <div class="combo">
-        <input id="item" autocomplete="off" placeholder="Start typing an item name" required
-               role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="suggestions">
-        <ul id="suggestions" class="suggestions" role="listbox" hidden></ul>
-      </div>
-    </div>
-    <button id="lookupBtn" type="submit">Look up</button>
-  </form>
+<div class="panel" id="lookupPanel" hidden>
   <div id="lookupResult"></div>
 </div>
 
 <footer class="fineprint">
-  Place each buy offer at the <em>Buy at</em> price. Once bought, list at the current instabuy − 100k
-  (<em>Sell at</em> is today's value, and what the lookup gives you); re-check and reprice every few hours.
-  "Profit if filled" is after 2% tax and assumes both offers fill at these prices; in backtests, picks like these
+  Place each buy offer at the <em>Buy at</em> price (instasell + 100k, rounded up to the nearest 1k). Once bought,
+  list at the current instabuy − 100k, rounded down to the nearest 1k (<em>Sell at</em> is today's value, and what
+  the lookup gives you); re-check and reprice every few hours.
+  "Profit" is after 2% tax and assumes both offers fill at these prices; in backtests, picks like these
   realized roughly 35–45% of it. Assumes all 8 GE slots are free and your full buy limits are available.
   Strategy and evidence:
   <a href="https://github.com/Isaiah7579/personal_projects/blob/main/runescape/RESEARCH.md" target="_blank" rel="noopener">RESEARCH.md</a>.
@@ -253,6 +248,20 @@ function formatGp(n) {
   return Math.round(n).toLocaleString();
 }
 
+// Compact formats for the phone card summary line: 315,515k for prices, 75m / 3.2m / 850k for profits.
+function formatK(n) {
+  return Math.round(n / 1000).toLocaleString() + 'k';
+}
+
+function formatShort(n) {
+  const abs = Math.abs(n);
+  if (abs >= 1e9) return (n / 1e9).toFixed(2) + 'b';
+  if (abs >= 1e7) return Math.round(n / 1e6) + 'm';
+  if (abs >= 1e6) return (n / 1e6).toFixed(1) + 'm';
+  if (abs >= 1e3) return Math.round(n / 1e3) + 'k';
+  return String(Math.round(n));
+}
+
 function parseCash(text) {
   const m = text.trim().toLowerCase().replace(/,/g, '').match(/^(\d+(?:\.\d+)?)\s*([kmb])?$/);
   if (!m) return null;
@@ -272,6 +281,9 @@ async function fetchJson(path) {
 }
 
 const saleTax = price => Math.floor(price * GE_TAX);
+// Offers use whole thousands so they're quick to type in-game: buys round up, sells round down.
+const roundUpK = price => Math.ceil(price / 1000) * 1000;
+const roundDownK = price => Math.floor(price / 1000) * 1000;
 
 // The item mapping is large and static, so it's fetched once and shared by the advisor and the lookup.
 let mappingPromise = null;
@@ -295,8 +307,8 @@ function screen(latest, volumes, mapping, nowSec, reasons) {
   const out = [];
   for (const [id, q] of Object.entries(latest)) {
     if (!q || q.high == null || q.low == null || q.highTime == null || q.lowTime == null) continue;
-    const buyPrice = q.low + OUTBID;
-    const sellPrice = q.high - OUTBID;
+    const buyPrice = roundUpK(q.low + OUTBID);
+    const sellPrice = roundDownK(q.high - OUTBID);
     if (buyPrice < MIN_BUY_PRICE || buyPrice > MAX_BUY_PRICE) continue;  // not counted: most items
     if (nowSec - Math.min(q.highTime, q.lowTime) > MAX_QUOTE_AGE_S) { reasons.age++; continue; }
     const margin = sellPrice - buyPrice - saleTax(sellPrice);
@@ -406,13 +418,17 @@ function render(picks, cash, reasons) {
     name.appendChild(link);
     name.insertAdjacentHTML('beforeend', '<span class="chevron" aria-hidden="true">▾</span>');
     tr.appendChild(name);
-    // "detail" cells are tucked into a tap-to-open dropdown in the phone card layout.
+    // Phone card layout: collapsed cards show only this one-line summary; tapping swaps it for the
+    // labelled "detail" cells. The summary cell is hidden on desktop.
+    tr.insertAdjacentHTML('beforeend', `<td class="summary">${qty} @ ${formatK(c.buyPrice)} &gt; ` +
+      `${formatK(c.sellPrice)} <span class="profit">(+${formatShort(qty * c.margin)}, ` +
+      `${formatShort(c.margin)} ea)</span></td>`);
     for (const [label, text, cls] of [
-      ['Qty', qty.toLocaleString(), ''],
-      ['Buy at (each)', c.buyPrice.toLocaleString(), ''],
+      ['Qty', qty.toLocaleString(), 'detail'],
+      ['Buy at (each)', c.buyPrice.toLocaleString(), 'detail'],
       ['Cost', formatGp(qty * c.buyPrice), 'detail'],
       ['Sell at (each)', c.sellPrice.toLocaleString(), 'detail'],
-      ['Profit if filled', formatGp(qty * c.margin), 'detail profit'],
+      ['Profit', formatGp(qty * c.margin), 'detail profit'],
     ]) {
       const td = document.createElement('td');
       td.textContent = text;
@@ -427,9 +443,11 @@ function render(picks, cash, reasons) {
   }
   $('totals').innerHTML = picks.length ? `
     <tr class="expandable"><td>Total<span class="chevron" aria-hidden="true">▾</span></td>
+    <td class="summary">${formatShort(cost)} spent · ${formatShort(cash - cost)} left ·
+      <span class="profit">+${formatShort(profit)}</span></td>
     <td class="empty"></td><td class="empty"></td><td class="detail" data-label="Cost">${formatGp(cost)}</td>
     <td class="detail muted" data-label="Cash left">${formatGp(cash - cost)}<span class="desktop-only"> left</span></td>
-    <td class="detail profit" data-label="Profit if filled">${formatGp(profit)}</td></tr>` : '';
+    <td class="detail profit" data-label="Profit">${formatGp(profit)}</td></tr>` : '';
 
   const labels = {
     age: 'a quote is more than 1 hour old',
@@ -448,6 +466,7 @@ function render(picks, cash, reasons) {
 async function run(cash) {
   $('go').disabled = true;
   $('results').hidden = true;
+  $('lookupPanel').hidden = true;
   try {
     setStatus('Fetching live prices...');
     const [latest, volumes, mapping] = await Promise.all([
@@ -497,21 +516,51 @@ for (const section of [$('rows'), $('totals')]) {
   });
 }
 
+// One search bar: a cash amount (1.5b, 750m, 200000000) runs the advisor; anything else is an item to price.
 $('form').addEventListener('submit', e => {
   e.preventDefault();
-  const cash = parseCash($('cash').value);
-  if (!cash || cash < MIN_BUY_PRICE) {
-    setStatus(`Enter at least ${formatGp(MIN_BUY_PRICE)} (e.g. 1.5b, 750m).`, true);
+  closeSuggestions();
+  const text = $('query').value.trim();
+  // A search is already running (picking a suggestion submits programmatically, past the disabled button).
+  if (!text || $('go').disabled) return;
+  // Ready for the next search: on phones drop the keyboard so it doesn't cover the results (the next tap
+  // re-selects via the focus handler); elsewhere keep focus with the text selected so typing replaces it.
+  if (matchMedia('(pointer: coarse)').matches) $('query').blur();
+  else $('query').select();
+  const cash = parseCash(text);
+  if (cash == null) {
+    lookup(text);
     return;
   }
-  try { localStorage.setItem(CASH_KEY, $('cash').value); } catch (_) { /* storage unavailable */ }
+  if (cash < MIN_BUY_PRICE) {
+    setStatus(`Enter at least ${formatGp(MIN_BUY_PRICE)} (e.g. 1.5b, 750m), or an item name.`, true);
+    return;
+  }
+  try { localStorage.setItem(CASH_KEY, text); } catch (_) { /* storage unavailable */ }
   run(cash);
 });
 
 try {
   const saved = localStorage.getItem(CASH_KEY);
-  if (saved) $('cash').value = saved;
+  if (saved) $('query').value = saved;
 } catch (_) { /* storage unavailable */ }
+
+// Select the remembered cash amount on focus so typing an item name replaces it. For mouse/touch focus the
+// select-all waits for mouseup and only applies to a plain click: selecting on mousedown would make a
+// click-drag pick up the selected text and drag-and-drop it instead of selecting what the user drags over.
+let pointerFocus = false;
+$('query').addEventListener('mousedown', () => {
+  const q = $('query');
+  if (document.activeElement !== q) pointerFocus = true;
+  else if (q.selectionStart !== q.selectionEnd) q.setSelectionRange(q.selectionEnd, q.selectionEnd);
+});
+$('query').addEventListener('focus', () => { if (!pointerFocus) $('query').select(); });
+$('query').addEventListener('mouseup', () => {
+  const q = $('query');
+  if (pointerFocus && q.selectionStart === q.selectionEnd) q.select();
+  pointerFocus = false;
+});
+$('query').addEventListener('dragstart', e => e.preventDefault());
 
 // ---- Sell price lookup: same rule the strategy uses for sell offers (instabuy − outbid) ----
 
@@ -533,6 +582,7 @@ function minutesAgo(ts) {
 
 function showLookup(html) {
   $('lookupResult').innerHTML = html;
+  $('lookupPanel').hidden = false;
 }
 
 function escapeHtml(text) {
@@ -541,12 +591,13 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
-$('lookupForm').addEventListener('submit', async e => {
-  e.preventDefault();
-  $('lookupBtn').disabled = true;
+async function lookup(text) {
+  $('go').disabled = true;
+  $('results').hidden = true;
+  setStatus('');
   try {
     const mapping = await loadMapping();
-    const { item, matches } = findItem(mapping, $('item').value);
+    const { item, matches } = findItem(mapping, text);
     if (!item) {
       showLookup(`<span class="warn">${matches ? `${matches} items match; pick one from the list.` : 'No item by that name.'}</span>`);
       return;
@@ -560,7 +611,7 @@ $('lookupForm').addEventListener('submit', async e => {
     }
     // The 100k outbid only makes sense for the expensive items the strategy trades; undercut cheap items by 1gp.
     const outbid = quote.high >= MIN_BUY_PRICE ? OUTBID : 1;
-    const sellPrice = quote.high - outbid;
+    const sellPrice = outbid === OUTBID ? roundDownK(quote.high - outbid) : quote.high - outbid;
     const net = sellPrice - saleTax(sellPrice);
     const warnings = [];
     if (Date.now() / 1000 - quote.highTime > MAX_QUOTE_AGE_S) {
@@ -572,16 +623,16 @@ $('lookupForm').addEventListener('submit', async e => {
     showLookup(`
       <div>${name}: sell at</div>
       <div class="big">${sellPrice.toLocaleString()}</div>
-      <div class="muted">Instabuy ${quote.high.toLocaleString()} (${minutesAgo(quote.highTime)}) − ${outbid === 1 ? '1 gp' : formatGp(outbid)}.
+      <div class="muted">Instabuy ${quote.high.toLocaleString()} (${minutesAgo(quote.highTime)}) − ${outbid === 1 ? '1 gp' : `${formatGp(outbid)}, rounded down to the nearest 1k`}.
         You receive ${net.toLocaleString()} each after 2% tax.</div>
       ${warnings.map(w => `<div class="warn">${w}</div>`).join('')}`);
   } catch (err) {
     console.error(err);
     showLookup(`<span class="warn">Error: ${escapeHtml(err.message)}</span>`);
   } finally {
-    $('lookupBtn').disabled = false;
+    $('go').disabled = false;
   }
-});
+}
 
 // ---- Item autocomplete (a native <datalist> can't be positioned or styled, and on phones it
 // becomes a separate bar above the keyboard) ----
@@ -597,13 +648,13 @@ loadMapping().then(mapping => {
 
 function closeSuggestions() {
   $('suggestions').hidden = true;
-  $('item').setAttribute('aria-expanded', 'false');
+  $('query').setAttribute('aria-expanded', 'false');
   activeSuggestion = -1;
 }
 
 function renderSuggestions() {
   const list = $('suggestions');
-  const q = $('item').value.trim().toLowerCase();
+  const q = $('query').value.trim().toLowerCase();
   list.innerHTML = suggestionMatches.map((name, i) => {
     const at = name.toLowerCase().indexOf(q);
     const html = escapeHtml(name.slice(0, at)) + '<mark>' + escapeHtml(name.slice(at, at + q.length)) + '</mark>' +
@@ -612,25 +663,25 @@ function renderSuggestions() {
       `${i === activeSuggestion ? ' class="active" aria-selected="true"' : ''}>${html}</li>`;
   }).join('');
   list.hidden = !suggestionMatches.length;
-  $('item').setAttribute('aria-expanded', String(!list.hidden));
+  $('query').setAttribute('aria-expanded', String(!list.hidden));
   if (activeSuggestion >= 0) {
-    $('item').setAttribute('aria-activedescendant', `suggestion-${activeSuggestion}`);
+    $('query').setAttribute('aria-activedescendant', `suggestion-${activeSuggestion}`);
     list.children[activeSuggestion].scrollIntoView({ block: 'nearest' });
   } else {
-    $('item').removeAttribute('aria-activedescendant');
+    $('query').removeAttribute('aria-activedescendant');
   }
 }
 
 function chooseSuggestion(index) {
-  $('item').value = suggestionMatches[index];
+  $('query').value = suggestionMatches[index];
   closeSuggestions();
-  $('lookupForm').requestSubmit();
+  $('form').requestSubmit();
 }
 
-$('item').addEventListener('input', () => {
-  const q = $('item').value.trim().toLowerCase();
+$('query').addEventListener('input', () => {
+  const q = $('query').value.trim().toLowerCase();
   activeSuggestion = -1;
-  if (q.length < 2) {
+  if (q.length < 2 || parseCash(q) != null) {  // cash amounts get no item suggestions
     suggestionMatches = [];
     closeSuggestions();
     return;
@@ -646,7 +697,7 @@ $('item').addEventListener('input', () => {
   renderSuggestions();
 });
 
-$('item').addEventListener('keydown', e => {
+$('query').addEventListener('keydown', e => {
   if ($('suggestions').hidden) return;
   if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
     e.preventDefault();
@@ -669,8 +720,7 @@ $('suggestions').addEventListener('mousedown', e => {
   chooseSuggestion(Number(li.dataset.index));
 });
 
-$('item').addEventListener('blur', closeSuggestions);
-$('lookupForm').addEventListener('submit', closeSuggestions);
+$('query').addEventListener('blur', closeSuggestions);
 </script>
 </body>
 </html>
