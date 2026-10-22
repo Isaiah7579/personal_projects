@@ -72,6 +72,11 @@ BUDGET = 1_500_000_000
 GE_SLOTS = 8
 GE_TAX = 0.02
 BUY_LIMIT_WINDOW_S = 4 * 3600
+# Known buy limits missing from the wiki mapping (new items whose limit isn't documented yet)
+BUY_LIMIT_OVERRIDES = {
+    64195: 2,  # Malachi's claw
+    64191: 2,  # Malachi's tooth
+}
 TOP_N_CANDIDATES = 20
 DP_GP_UNIT = 1_000_000  # optimizer budget resolution
 NEG_VALUE = -(10 ** 18)
@@ -247,7 +252,7 @@ class ItemSeries:
         rows.sort()
         self.id = item_id
         self.name = meta.get("name", f"Item {item_id}")
-        self.limit = meta.get("limit") or 0  # 0 = unknown, treated as no cap
+        self.limit = BUY_LIMIT_OVERRIDES.get(item_id) or meta.get("limit") or 0  # 0 = unknown, treated as no cap
         self.buckets = {r[0]: r for r in rows}  # ts -> (ts, avgHigh, highVol, avgLow, lowVol)
         self.ts = np.array([r[0] for r in rows], dtype=np.int64)
         self.cum_volume = np.concatenate([[0], np.cumsum([r[2] + r[4] for r in rows])])
@@ -355,6 +360,9 @@ class Strategy:
     max_quote_age_h: float | None = None  # skip if either quote's bucket started more than this long ago
     min_margin_pct: float | None = None  # skip if after-tax offer margin / buy price < x
     max_item_share: float | None = None  # cap one item's stock + buy offer at this share of equity
+    item_share_min_one: bool = False  # ...but always allow 1 unit (small stacks can't afford 1 within the share)
+    # Looser quote-age limits that only fill the cash and slots the strict picks leave over, loosest last
+    fallback_quote_age_h: tuple[float, ...] = ()
     # How buy slots are filled: max-value (optimizer's pick) | one-each (1 unit per item) |
     # one-each-if-short (max-value, but 1 unit per item if that leaves slots empty) | fill-slots (use every slot)
     slot_policy: str = "max-value"
@@ -380,8 +388,12 @@ STRATEGIES = {s.name: s for s in [
     Strategy("selected", "baseline + selection filters: quotes <= 1h old, >= 6 trading 5m buckets per side in "
              "24h, quotes within 10% of their 3-day median, 24h volume <= 2x the prior daily average",
              max_quote_age_h=1, min_trade_buckets=6, max_drift=0.10, max_volume_spike=2.0),
-    Strategy("recommended", "selected, outbidding by 100k, no item over 25% of equity", outbid=100_000,
+    Strategy("recommended-1h", "selected, outbidding by 100k, no item over 25% of equity", outbid=100_000,
              max_quote_age_h=1, min_trade_buckets=6, max_drift=0.10, max_volume_spike=2.0, max_item_share=0.25),
+    Strategy("recommended", "recommended-1h, but always allowing 1 unit of an item, and filling leftover cash and "
+             "slots with items whose quotes are <= 2h, then <= 4h old", outbid=100_000, max_quote_age_h=1,
+             min_trade_buckets=6, max_drift=0.10, max_volume_spike=2.0, max_item_share=0.25,
+             item_share_min_one=True, fallback_quote_age_h=(2, 4)),
 ]}
 
 
@@ -532,6 +544,10 @@ class Simulator:
     strategy: Strategy
     data_start: int = 0  # first bucket in the archive (for lookbacks that would run off its start)
     quiet: bool = False  # no journal or progress output (parameter sweeps)
+    # How a 5m bucket fills an offer once its average price reaches ours. The API only has bucket averages:
+    #   average - every unit in the bucket fills (optimistic: some may have traded on the wrong side of us)
+    #   floor   - 1 unit, the most the average proves (an average at/below our bid needs >= 1 trade at/below it)
+    fill_model: str = "average"
     journal: list[str] = field(default_factory=list)
     buy_offers: list[BuyOffer] = field(default_factory=list)
     sell_offers: dict[int, SellOffer] = field(default_factory=dict)
@@ -543,6 +559,15 @@ class Simulator:
 
     def __post_init__(self) -> None:
         self.by_id = {item.id: item for item in self.items}
+
+    def fill_cap(self, bucket_volume: int) -> int:
+        return 1 if self.fill_model == "floor" else bucket_volume
+
+    def count_units(self, side: str, qty: int, bucket_volume: int) -> None:
+        """Tally filled units, and how many of them only the bucket average justifies (beyond the 1 it proves)."""
+        self.fills[f"{side}_units"] += qty
+        if bucket_volume > 1:
+            self.fills[f"{side}_units_from_averages"] += max(0, qty - 1)
 
     def log(self, line: str = "") -> None:
         if not self.quiet:
@@ -634,16 +659,26 @@ class Simulator:
         self.log(f"Slots: {len(self.sell_offers)} selling, **{free_slots} free for buys**; "
                  f"cash available **{fmt_gp(self.cash)}**")
         self.log()
-        picks = self.plan_offers(candidates, free_slots)
+        picks = [(cand, qty, None) for cand, qty in self.plan_offers(candidates, free_slots)]
+        # Fallback: what the strict picks leave over goes to items with older (but not stale) quotes
+        for age_h in self.strategy.fallback_quote_age_h:
+            cash_left = self.cash - sum(cand.buy_price * qty for cand, qty, _ in picks)
+            slots_left = free_slots - len(picks)
+            if slots_left <= 0 or cash_left < MIN_BUY_PRICE:
+                break
+            picked = {cand.item.id for cand, _, _ in picks}
+            extra = [c for c in self.rank_candidates(t, equity, max_quote_age_h=age_h) if c.item.id not in picked]
+            picks += [(cand, qty, age_h) for cand, qty in choose_offers(extra, cash_left, slots_left)]
 
         if picks:
             self.log("**Place buy offers** (optimizer picks):")
-            for cand, qty in picks:
+            for cand, qty, fallback_age_h in picks:
                 cost = cand.buy_price * qty
                 self.cash -= cost
                 self.buy_offers.append(BuyOffer(cand.item, cand.buy_price, qty))
                 self.log(f"- {cand.item.name}: {qty} × {cand.buy_price:,} = {fmt_gp(cost)} "
-                         f"(expected {qty} × {fmt_gp(cand.margin)} after tax = {fmt_gp(qty * cand.margin)})")
+                         f"(expected {qty} × {fmt_gp(cand.margin)} after tax = {fmt_gp(qty * cand.margin)})"
+                         + (f" [fallback: quotes ≤ {fallback_age_h:g}h]" if fallback_age_h else ""))
             self.log(f"- Cash left after reserving: {fmt_gp(self.cash)}")
         else:
             self.log("**No buy offers placed.**")
@@ -663,8 +698,11 @@ class Simulator:
                 picks = spread
         return picks
 
-    def rank_candidates(self, t: int, equity: int) -> list[Candidate]:
+    def rank_candidates(self, t: int, equity: int, max_quote_age_h: float | None = None) -> list[Candidate]:
+        """Eligible candidates, best score first. max_quote_age_h overrides the strategy's (fallback rounds)."""
         s = self.strategy
+        if max_quote_age_h is not None:
+            s = replace(s, max_quote_age_h=max_quote_age_h)
         candidates = []
         skipped = Counter()
         for item in self.items:
@@ -736,7 +774,10 @@ class Simulator:
             max_qty = math.floor(vol4h if limit_left is None else min(vol4h, limit_left))
             if s.max_item_share is not None:
                 held = self.sell_offers[item.id].remaining if item.id in self.sell_offers else 0
-                max_qty = min(max_qty, math.floor(s.max_item_share * equity / buy_price) - held)
+                share_qty = math.floor(s.max_item_share * equity / buy_price)
+                if s.item_share_min_one:
+                    share_qty = max(share_qty, 1)
+                max_qty = min(max_qty, share_qty - held)
             if max_qty < 1:
                 skipped["cap < 1 unit (volume or buy limit)"] += 1
                 continue
@@ -745,7 +786,9 @@ class Simulator:
                                         limit_left, max_qty, max_qty * margin))
 
         candidates.sort(key=lambda c: c.score, reverse=True)
-        self.log(f"<details><summary>Candidate ranking: {len(candidates)} eligible, top "
+        self.log(f"<details><summary>Candidate ranking"
+                 f"{f' (quotes ≤ {s.max_quote_age_h:g}h)' if s.max_quote_age_h is not None else ''}: "
+                 f"{len(candidates)} eligible, top "
                  f"{min(len(candidates), TOP_N_CANDIDATES)} go to the optimizer</summary>")
         self.log()
         self.log("| # | Item | Instasell (bucket) | Instabuy (bucket) | Raw margin | Ranked margin "
@@ -781,7 +824,8 @@ class Simulator:
                     continue
                 avg_low, low_vol = bucket[3], bucket[4]
                 matched = avg_low <= offer.price
-                qty = min(offer.qty - offer.filled, low_vol) if matched else 0
+                qty = min(offer.qty - offer.filled, self.fill_cap(low_vol)) if matched else 0
+                self.count_units("buy", qty, low_vol)
                 traces.setdefault(f"BUY {offer.item.name} @ {offer.price:,}", []).append(
                     f"| {fmt_hm(ts)} | instasell avg {avg_low:,.0f} × {low_vol} | {'≤ offer ✔' if matched else '✘'} "
                     f"| {qty} |")
@@ -803,7 +847,8 @@ class Simulator:
                     continue
                 avg_high, high_vol = bucket[1], bucket[2]
                 matched = avg_high >= offer.price
-                qty = min(offer.remaining, high_vol) if matched else 0
+                qty = min(offer.remaining, self.fill_cap(high_vol)) if matched else 0
+                self.count_units("sell", qty, high_vol)
                 traces.setdefault(f"SELL {offer.item.name} @ {offer.price:,}", []).append(
                     f"| {fmt_hm(ts)} | instabuy avg {avg_high:,.0f} × {high_vol} | {'≥ offer ✔' if matched else '✘'} "
                     f"| {qty} |")
@@ -882,8 +927,8 @@ class Simulator:
 # ---------------------------------------------------------------------------
 
 def run_strategy(strategy: Strategy, items: list[ItemSeries], checks: list[int], start: int, end: int,
-                 budget: int, run_dir: Path, data_start: int) -> tuple[Simulator, dict]:
-    sim = Simulator(items, checks, end, budget, strategy, data_start=data_start)
+                 budget: int, run_dir: Path, data_start: int, fill_model: str) -> tuple[Simulator, dict]:
+    sim = Simulator(items, checks, end, budget, strategy, data_start=data_start, fill_model=fill_model)
     sim.log(f"# GE flipping backtest journal: {strategy.name}")
     sim.log()
     sim.log(f"- Strategy: **{strategy.name}**: {strategy.description}")
@@ -893,8 +938,9 @@ def run_strategy(strategy: Strategy, items: list[ItemSeries], checks: list[int],
             f"buy limit window {BUY_LIMIT_WINDOW_S // 3600}h")
     sim.log(f"- Universe (re-picked each check): buy {fmt_gp(MIN_BUY_PRICE)}–{fmt_gp(MAX_BUY_PRICE)}, "
             f"4h volume GP > {fmt_gp(MIN_4H_VOLUME_GP)}, positive after-tax margin, quotes ≤ 24h old")
-    sim.log("- Fill rule: buy fills in a 5m bucket if that bucket's avg instasell ≤ our price (qty ≤ bucket "
-            "instasell volume); sell fills if avg instabuy ≥ our price (qty ≤ bucket instabuy volume).")
+    sim.log("- Fill rule: buy fills in a 5m bucket if that bucket's avg instasell ≤ our price; sell fills if avg "
+            "instabuy ≥ our price. " + ("Up to the bucket's whole volume (fill model `average`)." if fill_model ==
+            "average" else "1 unit per bucket, the most the average proves (fill model `floor`)."))
     sim.log("- All times are local; bucket times are bucket start (MM-DD HH:MM).")
     sim.log()
 
@@ -950,6 +996,8 @@ def run_strategy(strategy: Strategy, items: list[ItemSeries], checks: list[int],
         "buy_fills": sim.fills["buy"],
         "sell_fills": sim.fills["sell"],
         "items": len(sim.ledgers),
+        "units": sim.fills["buy_units"] + sim.fills["sell_units"],
+        "units_from_averages": sim.fills["buy_units_from_averages"] + sim.fills["sell_units_from_averages"],
     }
     return sim, metrics
 
@@ -961,6 +1009,8 @@ def main() -> None:
     parser.add_argument("--offline", action="store_true", help="use the cached 5m archive, don't download")
     parser.add_argument("--strategy", choices=STRATEGIES, default="recommended")
     parser.add_argument("--compare", action="store_true", help="run every strategy variant and compare them")
+    parser.add_argument("--fill-model", choices=("average", "floor"), default="average",
+                        help="units a bucket fills once its average reaches our price: all of them, or 1")
     args = parser.parse_args()
 
     mapping_path = DATA_DIR / "mapping.json"
@@ -996,7 +1046,7 @@ def main() -> None:
     for name in names:
         t_run = time.monotonic()
         sim, metrics = run_strategy(STRATEGIES[name], items, checks, start, end, args.budget, run_dir,
-                                    data_start)
+                                    data_start, args.fill_model)
         results.append((STRATEGIES[name], metrics))
         print(f"  {name:22} profit {fmt_gp(metrics['profit']):>10} ({metrics['profit'] / args.budget:7.2%})"
               f"  [{time.monotonic() - t_run:.0f}s]", flush=True)
@@ -1013,17 +1063,21 @@ def main() -> None:
     base = results[0][1]["profit"]
     lines = [
         f"# Strategy comparison: {fmt_ts(start)} → {fmt_ts(end)} ({(end - start) / DAY:.1f} days, "
-        f"{len(checks)} checks, budget {fmt_gp(args.budget)})",
+        f"{len(checks)} checks, budget {fmt_gp(args.budget)}, fill model `{args.fill_model}`)",
+        "",
+        "*Units from averages*: share of filled units (buys + sells) that only the bucket average justifies, "
+        "beyond the 1 unit per bucket it proves.",
         "",
         "| Strategy | Profit | ROI | vs baseline | 1st half | 2nd half | Max drawdown | Worst day "
-        "| Buy fills | Sell fills | Items | Description |",
-        "|---|---|---|---|---|---|---|---|---|---|---|---|",
+        "| Buy fills | Sell fills | Units from averages | Items | Description |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for strategy, m in results:
         lines.append(f"| {strategy.name} | {fmt_gp(m['profit'])} | {m['profit'] / args.budget:.2%} "
                      f"| {fmt_gp(m['profit'] - base)} | {fmt_gp(m['first_half'])} | {fmt_gp(m['second_half'])} "
                      f"| {fmt_gp(m['max_drawdown'])} | {fmt_gp(m['worst_day'])} | {m['buy_fills']} "
-                     f"| {m['sell_fills']} | {m['items']} | {strategy.description} |")
+                     f"| {m['sell_fills']} | {m['units_from_averages'] / max(m['units'], 1):.0%} "
+                     f"| {m['items']} | {strategy.description} |")
     (run_dir / "compare.md").write_text("\n".join(lines), encoding="utf-8")
     print()
     print("\n".join(lines))

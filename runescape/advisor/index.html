@@ -87,6 +87,24 @@
   #lookupResult { margin-top: 14px; line-height: 1.6; }
   #lookupResult .big { font-size: 1.5rem; font-weight: 600; color: var(--accent2); }
   #lookupResult .warn { color: var(--danger); font-size: 0.85rem; }
+  .quotes { display: flex; flex-wrap: wrap; gap: 8px 40px; margin: 4px 0 8px 0; }
+  .quotes .quote { flex: 1 1 220px; }
+
+  #detailsPanel > details { margin: 0; }
+  #detailsPanel > details > summary { font-size: 1rem; font-weight: 600; color: var(--text); }
+  .details-note { color: var(--muted); font-size: 0.8rem; line-height: 1.5; margin: 10px 0; }
+  .details-wrap { overflow: auto; max-height: 75vh; border: 1px solid var(--border); border-radius: 6px; }
+  #detailsTable { font-size: 0.8rem; }
+  #detailsTable th, #detailsTable td { padding: 5px 8px; }
+  #detailsTable th { position: sticky; top: 0; z-index: 1; background: var(--panel); cursor: help;
+                     text-decoration: underline dotted; text-underline-offset: 3px; }
+  #detailsTable td:first-child { position: sticky; left: 0; background: var(--panel); }
+  #detailsTable th:first-child { left: 0; z-index: 2; }
+  #detailsTable tbody tr:hover td { background: var(--row-hover); }
+  #detailsTable tr.st-picked td:nth-child(2) { color: var(--accent2); font-weight: 600; }
+  #detailsTable tr.st-pool td:nth-child(2) { color: var(--accent); }
+  #detailsTable tr.rejected td:nth-child(2) { color: var(--muted); }
+  #detailsTable td.bad { color: var(--danger); }
 
   .suggestions {
     position: absolute;
@@ -116,7 +134,7 @@
   .suggestions mark { background: none; color: var(--accent); font-weight: 600; }
   .chevron, .mobile-only, td.summary { display: none; }
 
-  /* Phones: stack the forms and turn result rows into cards. */
+  /* Phones: stack the forms and turn result rows into cards (the details table stays a scrolling table). */
   @media (max-width: 640px) {
     body { padding: 16px 12px; }
     .panel { padding: 14px; }
@@ -126,11 +144,11 @@
     .suggestions { max-height: 380px; }
     .suggestions li { padding: 11px 12px; }
     .desktop-only { display: none; }
-    table, tbody, tfoot, tr, td { display: block; }
-    thead { display: none; }
-    tbody tr { padding: 10px 0; border-bottom: 1px solid var(--border); }
-    tbody tr:hover { background: none; }
-    td {
+    #results table, #results tbody, #results tfoot, #results tr, #results td { display: block; }
+    #results thead { display: none; }
+    #results tbody tr { padding: 10px 0; border-bottom: 1px solid var(--border); }
+    #results tbody tr:hover { background: none; }
+    #results td {
       display: flex;
       justify-content: space-between;
       gap: 12px;
@@ -139,17 +157,18 @@
       white-space: normal;
       text-align: right;
     }
-    td[data-label]::before { content: attr(data-label); color: var(--muted); text-align: left; }
-    td:first-child { font-weight: 600; font-size: 1rem; padding-bottom: 6px; }
-    td:first-child::before { content: none; }
-    tfoot tr { padding-top: 10px; }
-    tfoot td.empty { display: none; }
+    #results td[data-label]::before { content: attr(data-label); color: var(--muted); text-align: left; }
+    #results td:first-child { font-weight: 600; font-size: 1rem; padding-bottom: 6px; }
+    #results td:first-child::before { content: none; }
+    #results tfoot tr { padding-top: 10px; }
+    #results tfoot td.empty { display: none; }
     /* Only quantity and buy price by default; tap a card for cost, sell price and profit. */
-    tr.expandable { cursor: pointer; }
-    tr.expandable td.detail { display: none; }
-    tr.expandable.open td.detail { display: flex; }
-    tr.expandable td.summary { display: block; text-align: left; padding: 2px 0 0 0; }
-    tr.expandable.open td.summary { display: none; }
+    #results tr.expandable { cursor: pointer; }
+    #results tr.expandable td.detail { display: none; }
+    #results tr.expandable.open td.detail { display: flex; }
+    #results tr.expandable td.summary { display: block; text-align: left; padding: 2px 0 0 0; }
+    #results tr.expandable.open td.summary { display: none; }
+    #detailsTable td:first-child { max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
     .chevron { display: inline-block; margin-left: auto; color: var(--muted); transition: transform 0.15s; }
     tr.open .chevron { transform: rotate(180deg); }
     .mobile-only { display: block; }
@@ -160,7 +179,7 @@
 
 <h1>GE Flip Advisor</h1>
 <div class="subtitle">
-  Enter your cash stack to see what to buy, or an item to see what to sell it for.
+  Enter your cash stack to see what to buy, or an item to see what to buy and sell it for.
   <!-- <a href="../">Flip Finder →</a> (Flip Finder disabled for now) -->
 </div>
 
@@ -203,6 +222,23 @@
   </details>
 </div>
 
+<div class="panel" id="detailsPanel" hidden>
+  <details>
+    <summary id="detailsSummary">Details</summary>
+    <div class="details-note">
+      Every item priced in range: picks, then candidates the optimizer passed over, then rejects grouped by
+      reason. Items with quotes 1–4 hours old are only used for cash and slots the fresher picks leave over. Red values are the ones that failed a check. Hover a column
+      header for its formula. History columns are blank for items that never reached the price-history checks.
+    </div>
+    <div class="details-wrap">
+      <table id="detailsTable">
+        <thead id="detailsHead"></thead>
+        <tbody id="detailsBody"></tbody>
+      </table>
+    </div>
+  </details>
+</div>
+
 <div class="panel" id="lookupPanel" hidden>
   <div id="lookupResult"></div>
 </div>
@@ -213,6 +249,8 @@
   the lookup gives you); re-check and reprice every few hours.
   "Profit" is after 2% tax and assumes both offers fill at these prices; in backtests, picks like these
   realized roughly 35–45% of it. Assumes all 8 GE slots are free and your full buy limits are available.
+  No item gets more than 25% of your cash (but always at least 1 unit); in backtests this cap beat concentrating
+  in one item. Items whose last trades are 1–4 hours old only get the cash and slots fresher items leave over.
   Strategy and evidence:
   <a href="https://github.com/Isaiah7579/personal_projects/blob/main/runescape/RESEARCH.md" target="_blank" rel="noopener">RESEARCH.md</a>.
   Live data from <a href="https://prices.runescape.wiki/rs/all-items" target="_blank" rel="noopener">prices.runescape.wiki</a>.
@@ -220,8 +258,7 @@
 </footer>
 
 <script>
-// Strategy parameters: keep in sync with the `recommended` strategy in backtest_flips.py
-// (minus its 25% per-item cap, which is left to the user here).
+// Strategy parameters: keep in sync with the `recommended` strategy in backtest_flips.py.
 const API = 'https://prices.runescape.wiki/api/v2/rs';
 const OUTBID = 100_000;
 const MIN_BUY_PRICE = 75_000_000;
@@ -230,12 +267,21 @@ const MIN_4H_VOLUME_GP = 100_000_000;
 const GE_TAX = 0.02;
 const GE_SLOTS = 8;
 const TOP_N = 20;
-const MAX_QUOTE_AGE_S = 3600;
+// Quote-age limits (hours since the older of the two last trades). The first is the strict limit; each later
+// one only fills the cash and slots the earlier rounds leave over. Older than the last is rejected.
+const QUOTE_AGE_TIERS_H = [1, 2, 4];
 const MIN_TRADE_BUCKETS = 6;      // 5m buckets with trades per side, last 24h
 const MAX_DRIFT = 0.10;           // from the 3-day median
 const MAX_VOLUME_SPIKE = 2.0;     // last 24h volume vs prior daily average
+const MAX_ITEM_SHARE = 0.25;      // of your cash per item, but always at least 1 unit (the backtest uses equity)
 const REQUEST_DELAY_MS = 200;     // ~5 req/s against the free wiki API
 const CASH_KEY = 'rsFlipAdvisorCash';
+// Known buy limits missing from the wiki mapping (new items whose limit isn't documented yet).
+// Keep in sync with BUY_LIMIT_OVERRIDES in backtest_flips.py.
+const BUY_LIMIT_OVERRIDES = {
+  64195: 2,  // Malachi's claw
+  64191: 2,  // Malachi's tooth
+};
 
 const $ = id => document.getElementById(id);
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -301,70 +347,84 @@ function median(values) {
   return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
 }
 
-// Cheap screen on the bulk endpoints: price range, fresh quotes, positive after-tax margin, 4h volume.
-function screen(latest, volumes, mapping, nowSec, reasons) {
+// Cheap screen on the bulk endpoints: price range, quote age, positive after-tax margin and 4h volume, with
+// quantities limited by the per-item cap. Returns every item in the price range, best score first, with the
+// values it was judged on (shown in the details table), `tier` (index of the strictest quote-age limit it
+// meets) and `status` set to its rejection reason key, or null if it passed.
+function screen(latest, volumes, mapping, nowSec, cash, reasons) {
   const metaById = new Map(mapping.map(m => [String(m.id), m]));
   const out = [];
   for (const [id, q] of Object.entries(latest)) {
     if (!q || q.high == null || q.low == null || q.highTime == null || q.lowTime == null) continue;
     const buyPrice = roundUpK(q.low + OUTBID);
     const sellPrice = roundDownK(q.high - OUTBID);
-    if (buyPrice < MIN_BUY_PRICE || buyPrice > MAX_BUY_PRICE) continue;  // not counted: most items
-    if (nowSec - Math.min(q.highTime, q.lowTime) > MAX_QUOTE_AGE_S) { reasons.age++; continue; }
-    const margin = sellPrice - buyPrice - saleTax(sellPrice);
-    if (margin <= 0) { reasons.margin++; continue; }
-    const volume4h = (volumes[id] || 0) / 6;
-    if (volume4h * buyPrice <= MIN_4H_VOLUME_GP) { reasons.volume++; continue; }
+    if (buyPrice < MIN_BUY_PRICE || buyPrice > MAX_BUY_PRICE) continue;  // not counted or shown: most items
     const meta = metaById.get(id) || {};
-    const limit = meta.limit || 0;
-    const maxQty = Math.floor(limit ? Math.min(volume4h, limit) : volume4h);
-    if (maxQty < 1) { reasons.volume++; continue; }
-    out.push({
-      id, name: meta.name || `Item ${id}`, instasell: q.low, instabuy: q.high,
-      buyPrice, sellPrice, margin, maxQty, score: maxQty * margin
-    });
+    const tax = saleTax(sellPrice);
+    const volume24h = volumes[id] || 0;
+    const limit = BUY_LIMIT_OVERRIDES[id] || meta.limit || 0;
+    const c = {
+      id, name: meta.name || `Item ${id}`, instasell: q.low, instasellTime: q.lowTime,
+      instabuy: q.high, instabuyTime: q.highTime, buyPrice, sellPrice, tax,
+      margin: sellPrice - buyPrice - tax, volume24h, volume4h: volume24h / 6,
+      limit, limitOverride: id in BUY_LIMIT_OVERRIDES,
+      capQty: Math.max(1, Math.floor(MAX_ITEM_SHARE * cash / buyPrice)),
+    };
+    const volumeQty = Math.floor(limit ? Math.min(c.volume4h, limit) : c.volume4h);
+    c.maxQty = Math.min(volumeQty, c.capQty);
+    c.score = Math.max(0, c.maxQty) * Math.max(0, c.margin);
+    const ageH = (nowSec - Math.min(q.highTime, q.lowTime)) / 3600;
+    c.tier = QUOTE_AGE_TIERS_H.findIndex(limitH => ageH <= limitH);
+    if (c.tier < 0) c.status = 'age';
+    else if (c.margin <= 0) c.status = 'margin';
+    else if (c.volume4h * buyPrice <= MIN_4H_VOLUME_GP || volumeQty < 1) c.status = 'volume';
+    else c.status = null;
+    if (c.status) reasons[c.status]++;
+    out.push(c);
   }
   return out.sort((a, b) => b.score - a.score);
 }
 
-// History checks (per-item timeseries): liquidity, drift from 3-day median, volume spike.
-// Returns a rejection reason key, or null if the item passes.
+// History checks (per-item timeseries): liquidity, drift from 3-day median, volume spike. Records what each
+// check measured on `c.history` and returns a rejection reason key, or null if the item passes.
 function historyCheck(c, fiveMin, hourly, nowSec) {
+  const h = c.history = {};
   const dayAgo = nowSec - 86400;
   const recent = fiveMin.filter(b => b.timestamp >= dayAgo);
-  const sellBuckets = recent.filter(b => b.avgLowPrice != null && b.lowPriceVolume > 0).length;
-  const buyBuckets = recent.filter(b => b.avgHighPrice != null && b.highPriceVolume > 0).length;
-  if (Math.min(sellBuckets, buyBuckets) < MIN_TRADE_BUCKETS) return 'liquidity';
+  h.sellBuckets = recent.filter(b => b.avgLowPrice != null && b.lowPriceVolume > 0).length;
+  h.buyBuckets = recent.filter(b => b.avgHighPrice != null && b.highPriceVolume > 0).length;
 
   // The backtest used the median of 5m buckets; the API only serves 3 days of history at 1h resolution.
   const threeDaysAgo = nowSec - 3 * 86400;
   const window = hourly.filter(b => b.timestamp >= threeDaysAgo);
-  const lowMedian = median(window.filter(b => b.avgLowPrice != null).map(b => b.avgLowPrice));
-  const highMedian = median(window.filter(b => b.avgHighPrice != null).map(b => b.avgHighPrice));
-  if ((lowMedian && Math.abs(c.instasell / lowMedian - 1) > MAX_DRIFT) ||
-      (highMedian && Math.abs(c.instabuy / highMedian - 1) > MAX_DRIFT)) return 'drift';
+  h.lowMedian = median(window.filter(b => b.avgLowPrice != null).map(b => b.avgLowPrice));
+  h.highMedian = median(window.filter(b => b.avgHighPrice != null).map(b => b.avgHighPrice));
+  h.lowDrift = h.lowMedian ? c.instasell / h.lowMedian - 1 : null;
+  h.highDrift = h.highMedian ? c.instabuy / h.highMedian - 1 : null;
 
   const volumeOf = b => (b.highPriceVolume || 0) + (b.lowPriceVolume || 0);
-  const last24h = hourly.filter(b => b.timestamp >= dayAgo).reduce((s, b) => s + volumeOf(b), 0);
+  h.last24h = hourly.filter(b => b.timestamp >= dayAgo).reduce((s, b) => s + volumeOf(b), 0);
+  h.priorAvg = null;
   const prior = hourly.filter(b => b.timestamp < dayAgo);
   if (prior.length) {
     const priorDays = Math.min(7, (dayAgo - prior[0].timestamp) / 86400);
-    if (priorDays >= 1) {
-      const priorAvg = prior.reduce((s, b) => s + volumeOf(b), 0) / priorDays;
-      if (last24h > MAX_VOLUME_SPIKE * priorAvg) return 'spike';
-    }
+    if (priorDays >= 1) h.priorAvg = prior.reduce((s, b) => s + volumeOf(b), 0) / priorDays;
   }
+
+  if (Math.min(h.sellBuckets, h.buyBuckets) < MIN_TRADE_BUCKETS) return 'liquidity';
+  if (Math.abs(h.lowDrift ?? 0) > MAX_DRIFT || Math.abs(h.highDrift ?? 0) > MAX_DRIFT) return 'drift';
+  if (h.priorAvg != null && h.last24h > MAX_VOLUME_SPIKE * h.priorAvg) return 'spike';
   return null;
 }
 
 // Bounded knapsack with an offer-count dimension: maximize sum(qty * margin) subject to
-// sum(qty * buyPrice) <= cash and at most GE_SLOTS offers. Costs are rounded up to `unit` gp,
+// sum(qty * buyPrice) <= cash and at most `slots` offers. Costs are rounded up to `unit` gp,
 // so the answer is always affordable. Same algorithm as choose_offers() in backtest_flips.py.
-function chooseOffers(pool, cash) {
+function chooseOffers(pool, cash, slots) {
   const unit = Math.max(1_000_000, Math.ceil(cash / 5000));
   const B = Math.floor(cash / unit);
-  const K = GE_SLOTS;
-  if (B <= 0 || !pool.length) return [];
+  const K = slots;
+  if (B <= 0 || K <= 0 || !pool.length) return [];
   const W = B + 1;
   let dp = new Float64Array((K + 1) * W);
   const stages = [];
@@ -450,7 +510,7 @@ function render(picks, cash, reasons) {
     <td class="detail profit" data-label="Profit">${formatGp(profit)}</td></tr>` : '';
 
   const labels = {
-    age: 'a quote is more than 1 hour old',
+    age: `a quote is more than ${QUOTE_AGE_TIERS_H.at(-1)} hours old`,
     margin: 'no profit after 2% tax and the 100k outbid',
     volume: '4h volume under 100M gp (or under one unit)',
     liquidity: `fewer than ${MIN_TRADE_BUCKETS} trading 5-minute windows per side in 24h`,
@@ -463,9 +523,111 @@ function render(picks, cash, reasons) {
   $('results').hidden = false;
 }
 
+// ---- Details table: every item in the price range with each value it was judged on ----
+
+const DASH = '—';
+const STATUS_ORDER = ['picked', 'pool', 'liquidity', 'drift', 'spike', 'failed', 'unchecked', 'volume', 'margin',
+  'age'];
+const STATUS_LABELS = {
+  pool: 'Passed, not picked',
+  unchecked: 'Not checked (not needed)',
+  age: 'Stale quote',
+  margin: 'No margin',
+  volume: 'Low volume',
+  liquidity: 'Thin trading',
+  drift: 'Price drift',
+  spike: 'Volume spike',
+  failed: 'History failed',
+};
+const fmtInt = n => n == null ? DASH : Math.round(n).toLocaleString();
+const fmtDrift = x => x == null ? DASH : (x >= 0 ? '+' : '') + (x * 100).toFixed(1) + '%';
+// Older than the strict limit (lookup warnings) / older than the loosest limit (rejected)
+const isStale = ts => Date.now() / 1000 - ts > QUOTE_AGE_TIERS_H[0] * 3600;
+const isTooOld = ts => Date.now() / 1000 - ts > QUOTE_AGE_TIERS_H.at(-1) * 3600;
+const fromHistory = (c, f) => c.history ? f(c.history) : DASH;
+
+// [header, tooltip (the formula), cell]. A cell is text/HTML, or [text, failed] to mark a value that failed
+// its check.
+const DETAIL_COLUMNS = [
+  ['Item', 'Opens the wiki price page',
+    c => `<a href="https://prices.runescape.wiki/rs/item/${c.id}" target="_blank" rel="noopener">${escapeHtml(c.name)}</a>`],
+  ['Status', 'Where the item stopped. Checks run in order: quote age, margin and volume on live prices; then, ' +
+    'one round per quote-age limit, trading windows, drift and volume spike on price history, best score first ' +
+    `until ${TOP_N} pass, and the optimizer picks from those (later rounds only get leftover cash and slots)`,
+    c => c.status === 'picked' ? `Buy ${c.qty}${c.pickedTier > 0 ? ' (fallback)' : ''}` : STATUS_LABELS[c.status]],
+  ['Quotes', `Strictest quote-age limit the item meets (by its older quote): ${QUOTE_AGE_TIERS_H[0]}h is the ` +
+    `normal limit; ${QUOTE_AGE_TIERS_H.slice(1).join('h and ')}h only fill leftover cash and slots`,
+    c => c.tier >= 0 ? `≤ ${QUOTE_AGE_TIERS_H[c.tier]}h` : DASH],
+  ['Rank', 'Position by Score among all items in the price range', c => c.rank],
+  ['Instasell', 'Latest instasell trade price (our buy offer goes just above it)', c => fmtInt(c.instasell)],
+  ['Age', `Time since that instasell trade; over ${QUOTE_AGE_TIERS_H.at(-1)} hours fails`,
+    c => [minutesAgo(c.instasellTime), isTooOld(c.instasellTime)]],
+  ['Instabuy', 'Latest instabuy trade price (our sell offer goes just below it)', c => fmtInt(c.instabuy)],
+  ['Age', `Time since that instabuy trade; over ${QUOTE_AGE_TIERS_H.at(-1)} hours fails`,
+    c => [minutesAgo(c.instabuyTime), isTooOld(c.instabuyTime)]],
+  ['Spread', 'Instabuy − Instasell', c => fmtInt(c.instabuy - c.instasell)],
+  ['Buy at', 'Instasell + 100k, rounded up to the nearest 1k', c => fmtInt(c.buyPrice)],
+  ['Sell at', 'Instabuy − 100k, rounded down to the nearest 1k', c => fmtInt(c.sellPrice)],
+  ['Tax', '2% of Sell at, rounded down', c => fmtInt(c.tax)],
+  ['Margin', 'Sell at − Buy at − Tax: profit per unit; must be positive', c => [fmtInt(c.margin), c.margin <= 0]],
+  ['Margin %', 'Margin ÷ Buy at', c => (c.margin / c.buyPrice * 100).toFixed(2) + '%'],
+  ['24h vol', 'Units traded in the last 24h, both sides (wiki volumes endpoint)', c => fmtInt(c.volume24h)],
+  ['4h vol', '24h vol ÷ 6', c => c.volume4h.toFixed(1)],
+  ['4h vol gp', '4h vol × Buy at; must be over 100M',
+    c => [formatGp(c.volume4h * c.buyPrice), c.volume4h * c.buyPrice <= MIN_4H_VOLUME_GP]],
+  ['Limit', 'GE buy limit from the wiki; * = hard-coded because the wiki has none',
+    c => c.limit ? c.limit + (c.limitOverride ? '*' : '') : DASH],
+  ['Cap qty', `Units that fit in ${MAX_ITEM_SHARE * 100}% of your cash: ${MAX_ITEM_SHARE * 100}% × cash ÷ Buy at, ` +
+    'rounded down, but at least 1', c => c.capQty],
+  ['Max qty', 'min(4h vol, Limit) rounded down, then at most Cap qty: the most the optimizer may buy',
+    c => [c.maxQty, c.maxQty < 1]],
+  ['Score', 'Max qty × Margin; price-history checks go best score first', c => formatGp(c.score)],
+  ['Sell windows', `5-minute windows with instasell trades in the last 24h; need ${MIN_TRADE_BUCKETS}+`,
+    c => fromHistory(c, h => [h.sellBuckets, h.sellBuckets < MIN_TRADE_BUCKETS])],
+  ['Buy windows', `5-minute windows with instabuy trades in the last 24h; need ${MIN_TRADE_BUCKETS}+`,
+    c => fromHistory(c, h => [h.buyBuckets, h.buyBuckets < MIN_TRADE_BUCKETS])],
+  ['Instasell 3d median', 'Median of hourly average instasell prices over the last 3 days',
+    c => fromHistory(c, h => fmtInt(h.lowMedian))],
+  ['Drift', `Instasell ÷ its 3-day median − 1; beyond ±${MAX_DRIFT * 100}% fails`,
+    c => fromHistory(c, h => [fmtDrift(h.lowDrift), Math.abs(h.lowDrift ?? 0) > MAX_DRIFT])],
+  ['Instabuy 3d median', 'Median of hourly average instabuy prices over the last 3 days',
+    c => fromHistory(c, h => fmtInt(h.highMedian))],
+  ['Drift', `Instabuy ÷ its 3-day median − 1; beyond ±${MAX_DRIFT * 100}% fails`,
+    c => fromHistory(c, h => [fmtDrift(h.highDrift), Math.abs(h.highDrift ?? 0) > MAX_DRIFT])],
+  ['24h vol (history)', 'Units traded in the last 24h from the hourly price history, both sides',
+    c => fromHistory(c, h => fmtInt(h.last24h))],
+  ['Prior daily vol', 'Average daily volume over the (up to 7) days before the last 24h',
+    c => fromHistory(c, h => h.priorAvg == null ? DASH : h.priorAvg.toFixed(1))],
+  ['Spike', `24h vol (history) ÷ Prior daily vol; over ${MAX_VOLUME_SPIKE}× fails`,
+    c => fromHistory(c, h => [h.priorAvg ? (h.last24h / h.priorAvg).toFixed(2) + '×' : DASH,
+      h.priorAvg != null && h.last24h > MAX_VOLUME_SPIKE * h.priorAvg])],
+  ['Qty', 'Units the optimizer buys', c => c.qty || DASH],
+  ['Cost', 'Qty × Buy at', c => c.qty ? formatGp(c.qty * c.buyPrice) : DASH],
+  ['Profit', 'Qty × Margin, if both offers fill', c => c.qty ? formatGp(c.qty * c.margin) : DASH],
+];
+
+function renderDetails(considered, cash) {
+  $('detailsHead').innerHTML = '<tr>' + DETAIL_COLUMNS.map(([label, title]) =>
+    `<th title="${title}">${label}</th>`).join('') + '</tr>';
+  const rows = considered.slice().sort((a, b) =>
+    STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status) || b.score - a.score);
+  $('detailsBody').innerHTML = rows.map(c => {
+    const rejected = !['picked', 'pool', 'unchecked'].includes(c.status);
+    const cells = DETAIL_COLUMNS.map(([, , cell]) => {
+      const [text, failed] = [].concat(cell(c));
+      return `<td${failed ? ' class="bad"' : ''}>${text}</td>`;
+    });
+    return `<tr class="st-${c.status}${rejected ? ' rejected' : ''}">${cells.join('')}</tr>`;
+  }).join('');
+  $('detailsSummary').textContent = `Details: all ${considered.length} items priced ` +
+    `${formatGp(MIN_BUY_PRICE)}–${formatGp(MAX_BUY_PRICE)} (cash ${formatGp(cash)})`;
+  $('detailsPanel').hidden = !considered.length;
+}
+
 async function run(cash) {
   $('go').disabled = true;
   $('results').hidden = true;
+  $('detailsPanel').hidden = true;
   $('lookupPanel').hidden = true;
   try {
     setStatus('Fetching live prices...');
@@ -474,32 +636,58 @@ async function run(cash) {
     ]);
     const nowSec = Date.now() / 1000;
     const reasons = { age: 0, margin: 0, volume: 0, liquidity: 0, drift: 0, spike: 0, failed: 0 };
-    const screened = screen(latest.data, volumes.data, mapping, nowSec, reasons);
+    const considered = screen(latest.data, volumes.data, mapping, nowSec, cash, reasons);
+    considered.forEach((c, i) => { c.rank = i + 1; });
+    const screened = considered.filter(c => !c.status);
 
-    // Walk candidates best-first, checking history until TOP_N pass (what the optimizer chooses from).
-    const pool = [];
-    for (let i = 0; i < screened.length && pool.length < TOP_N; i++) {
-      const c = screened[i];
-      setStatus(`Checking price history: ${c.name} (${i + 1}/${screened.length}, ${pool.length} passed)...`);
-      try {
-        const [fiveMin, hourly] = await Promise.all([
-          fetchJson(`timeseries?id=${c.id}&lookback=24h`),
-          fetchJson(`timeseries?id=${c.id}&lookback=7d`),
-        ]);
-        const reason = historyCheck(c, fiveMin.data || [], hourly.data || [], nowSec);
-        if (reason) reasons[reason]++;
-        else pool.push(c);
-      } catch (err) {
-        console.error(c.name, err);
-        reasons.failed++;
+    // One round per quote-age limit, strictest first; later rounds only get the cash and slots left over.
+    // Each round walks candidates within its limit best-first, checking history (once per item) until TOP_N
+    // pass, and the optimizer chooses from those, leaving out items already picked.
+    const picks = [];
+    let cashLeft = cash, slotsLeft = GE_SLOTS;
+    for (let tier = 0; tier < QUOTE_AGE_TIERS_H.length; tier++) {
+      if (slotsLeft <= 0 || cashLeft < MIN_BUY_PRICE) break;
+      const limitH = QUOTE_AGE_TIERS_H[tier];
+      const pool = [];
+      for (let i = 0; i < screened.length && pool.length < TOP_N; i++) {
+        const c = screened[i];
+        if (c.tier > tier || c.qty) continue;
+        if (!c.status) {
+          setStatus(`Checking price history (quotes ≤ ${limitH}h): ${c.name} (${i + 1}/${screened.length}, ` +
+            `${pool.length} passed)...`);
+          try {
+            const [fiveMin, hourly] = await Promise.all([
+              fetchJson(`timeseries?id=${c.id}&lookback=24h`),
+              fetchJson(`timeseries?id=${c.id}&lookback=7d`),
+            ]);
+            const reason = historyCheck(c, fiveMin.data || [], hourly.data || [], nowSec);
+            c.status = reason || 'pool';
+            if (reason) reasons[reason]++;
+          } catch (err) {
+            console.error(c.name, err);
+            c.status = 'failed';
+            reasons.failed++;
+          }
+          await sleep(REQUEST_DELAY_MS * 2);
+        }
+        if (c.status === 'pool') pool.push(c);
       }
-      await sleep(REQUEST_DELAY_MS * 2);
+      for (const pick of chooseOffers(pool, cashLeft, slotsLeft)) {
+        Object.assign(pick.c, { status: 'picked', qty: pick.qty, pickedTier: tier });
+        cashLeft -= pick.qty * pick.c.buyPrice;
+        slotsLeft--;
+        picks.push(pick);
+      }
     }
+    for (const c of screened) c.status ??= 'unchecked';
 
-    const picks = chooseOffers(pool, cash);
     render(picks, cash, reasons);
-    setStatus(`${pool.length} items passed all checks; ${picks.length} offer${picks.length === 1 ? '' : 's'} for ` +
-      `${formatGp(cash)}. Prices as of ${new Date().toLocaleTimeString()}.`);
+    renderDetails(considered, cash);
+    const passed = screened.filter(c => c.status === 'pool' || c.status === 'picked').length;
+    const fallback = picks.filter(p => p.c.pickedTier > 0).length;
+    setStatus(`${passed} items passed all checks; ${picks.length} offer${picks.length === 1 ? '' : 's'} for ` +
+      `${formatGp(cash)}${fallback ? ` (${fallback} from older quotes, for cash fresher items couldn't use)` : ''}. ` +
+      `Prices as of ${new Date().toLocaleTimeString()}.`);
   } catch (err) {
     console.error(err);
     setStatus(`Error: ${err.message}`, true);
@@ -562,7 +750,7 @@ $('query').addEventListener('mouseup', () => {
 });
 $('query').addEventListener('dragstart', e => e.preventDefault());
 
-// ---- Sell price lookup: same rule the strategy uses for sell offers (instabuy − outbid) ----
+// ---- Price lookup: same rules the strategy uses for offers (instasell + outbid, instabuy − outbid) ----
 
 function findItem(mapping, query) {
   const q = query.trim().toLowerCase();
@@ -594,6 +782,7 @@ function escapeHtml(text) {
 async function lookup(text) {
   $('go').disabled = true;
   $('results').hidden = true;
+  $('detailsPanel').hidden = true;
   setStatus('');
   try {
     const mapping = await loadMapping();
@@ -602,29 +791,49 @@ async function lookup(text) {
       showLookup(`<span class="warn">${matches ? `${matches} items match; pick one from the list.` : 'No item by that name.'}</span>`);
       return;
     }
-    showLookup('<span class="muted">Fetching latest price...</span>');
-    const quote = (await fetchJson(`latest?id=${item.id}`)).data[item.id];
+    showLookup('<span class="muted">Fetching latest prices...</span>');
+    const quote = (await fetchJson(`latest?id=${item.id}`)).data[item.id] || {};
     const name = `<a href="https://prices.runescape.wiki/rs/item/${item.id}" target="_blank" rel="noopener">${escapeHtml(item.name)}</a>`;
-    if (!quote || quote.high == null) {
-      showLookup(`${name}: <span class="warn">no recent instabuy trades to price from.</span>`);
+    if (quote.high == null && quote.low == null) {
+      showLookup(`${name}: <span class="warn">no recent trades to price from.</span>`);
       return;
     }
-    // The 100k outbid only makes sense for the expensive items the strategy trades; undercut cheap items by 1gp.
-    const outbid = quote.high >= MIN_BUY_PRICE ? OUTBID : 1;
-    const sellPrice = outbid === OUTBID ? roundDownK(quote.high - outbid) : quote.high - outbid;
-    const net = sellPrice - saleTax(sellPrice);
+    // The 100k outbid only makes sense for the expensive items the strategy trades; outbid cheap items by 1gp.
+    const outbid = (quote.high ?? quote.low) >= MIN_BUY_PRICE ? OUTBID : 1;
+    const outbidText = dir => outbid === 1 ? '1 gp' : `${formatGp(outbid)}, rounded ${dir} to the nearest 1k`;
+    const quotes = [];
     const warnings = [];
-    if (Date.now() / 1000 - quote.highTime > MAX_QUOTE_AGE_S) {
-      warnings.push('The last instabuy trade is over an hour old; the price may have moved.');
+    let buyPrice = null, sellPrice = null;
+    if (quote.low != null) {
+      buyPrice = outbid === OUTBID ? roundUpK(quote.low + outbid) : quote.low + outbid;
+      quotes.push(`<div class="quote"><div>Buy at</div><div class="big">${buyPrice.toLocaleString()}</div>
+        <div class="muted">Instasell ${quote.low.toLocaleString()} (${minutesAgo(quote.lowTime)}) + ${outbidText('up')}.</div></div>`);
+      if (isStale(quote.lowTime)) warnings.push('The last instasell trade is over an hour old; the buy price may have moved.');
+    } else {
+      quotes.push('<div class="quote"><div>Buy at</div><div class="warn">No recent instasell trades to price from.</div></div>');
     }
-    if (quote.low != null && quote.low > quote.high) {
+    if (quote.high != null) {
+      sellPrice = outbid === OUTBID ? roundDownK(quote.high - outbid) : quote.high - outbid;
+      quotes.push(`<div class="quote"><div>Sell at</div><div class="big">${sellPrice.toLocaleString()}</div>
+        <div class="muted">Instabuy ${quote.high.toLocaleString()} (${minutesAgo(quote.highTime)}) − ${outbidText('down')}.
+        You receive ${(sellPrice - saleTax(sellPrice)).toLocaleString()} each after 2% tax.</div></div>`);
+      if (isStale(quote.highTime)) warnings.push('The last instabuy trade is over an hour old; the sell price may have moved.');
+    } else {
+      quotes.push('<div class="quote"><div>Sell at</div><div class="warn">No recent instabuy trades to price from.</div></div>');
+    }
+    if (quote.low != null && quote.high != null && quote.low > quote.high) {
       warnings.push(`Latest instasell (${quote.low.toLocaleString()}) is above instabuy; one side is probably stale.`);
     }
+    let marginLine = '';
+    if (buyPrice != null && sellPrice != null) {
+      const margin = sellPrice - buyPrice - saleTax(sellPrice);
+      marginLine = `<div class="muted">Flip margin at these prices: <span class="${margin > 0 ? 'profit' : 'warn'}">` +
+        `${margin.toLocaleString()}</span> each after tax (${(margin / buyPrice * 100).toFixed(2)}%).</div>`;
+    }
     showLookup(`
-      <div>${name}: sell at</div>
-      <div class="big">${sellPrice.toLocaleString()}</div>
-      <div class="muted">Instabuy ${quote.high.toLocaleString()} (${minutesAgo(quote.highTime)}) − ${outbid === 1 ? '1 gp' : `${formatGp(outbid)}, rounded down to the nearest 1k`}.
-        You receive ${net.toLocaleString()} each after 2% tax.</div>
+      <div>${name}</div>
+      <div class="quotes">${quotes.join('')}</div>
+      ${marginLine}
       ${warnings.map(w => `<div class="warn">${w}</div>`).join('')}`);
   } catch (err) {
     console.error(err);
