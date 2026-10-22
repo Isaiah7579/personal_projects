@@ -50,9 +50,10 @@ def fold_bounds(start: int, end: int) -> list[tuple[int, int]]:
     return list(zip(edges, edges[1:]))
 
 
-def simulate(strategy: Strategy, a: int, b: int) -> dict:
+def simulate(strategy: Strategy, a: int, b: int, fill_model: str) -> dict:
     items, data_start, _, _ = _DATA
-    sim = Simulator(items, check_times(a, b), b, BUDGET, strategy, data_start=data_start, quiet=True)
+    sim = Simulator(items, check_times(a, b), b, BUDGET, strategy, data_start=data_start, quiet=True,
+                    fill_model=fill_model)
     sim.run()
     peak, drawdown = BUDGET, 0
     for _, equity, _, _ in sim.equity_log:
@@ -74,11 +75,11 @@ def _init() -> None:
     _DATA = load()
 
 
-def _job(args: tuple[Strategy, int]) -> tuple[str, int, dict]:
-    strategy, fold = args
+def _job(args: tuple[Strategy, int, str]) -> tuple[str, int, dict]:
+    strategy, fold, fill_model = args
     _, _, start, end = _DATA
     a, b = fold_bounds(start, end)[fold]
-    return strategy.name, fold, simulate(strategy, a, b)
+    return strategy.name, fold, simulate(strategy, a, b, fill_model)
 
 
 # ---------------------------------------------------------------------------
@@ -184,6 +185,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--stage", choices=STAGES, default="oat")
     parser.add_argument("--workers", type=int, default=max(1, mp.cpu_count() - 4))
+    parser.add_argument("--fill-model", choices=("average", "floor"), default="average",
+                        help="units a bucket fills once its average reaches our price: all of them, or 1")
     args = parser.parse_args()
 
     configs = STAGES[args.stage]()
@@ -195,7 +198,7 @@ def main() -> None:
 
     t0 = time.monotonic()
     results: dict[str, dict[int, dict]] = {c.name: {} for c in configs}
-    jobs = [(c, f) for c in configs for f in range(FOLDS)]
+    jobs = [(c, f, args.fill_model) for c in configs for f in range(FOLDS)]
     with mp.Pool(args.workers, initializer=_init) as pool:
         for n, (name, fold, metrics) in enumerate(pool.imap_unordered(_job, jobs), 1):
             results[name][fold] = metrics
@@ -213,7 +216,7 @@ def main() -> None:
     header = ("| Config | " + " | ".join(f"Fold {labels[f]}" for f in tune) + f" | Worst tuning fold "
               f"| Fold {labels[holdout]} (held out) | Max drawdown | Buys | Losing items | Worst item |")
     lines = [
-        f"# Selection tuning: {args.stage}",
+        f"# Selection tuning: {args.stage} (fill model `{args.fill_model}`)",
         "",
         f"Window {fmt_ts(start)} → {fmt_ts(end)}; folds: "
         + ", ".join(f"{labels[i]} = {fmt_ts(a)} → {fmt_ts(b)}" for i, (a, b) in enumerate(bounds)),
@@ -236,7 +239,7 @@ def main() -> None:
     lines.append("")
     lines.append(f"Baseline: " + ", ".join(f"{labels[f]} {fmt_gp(base[f]['profit'])}" for f in range(FOLDS)))
 
-    out = DATA_DIR / "runs" / f"tuning-{args.stage}-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}.md"
+    out = DATA_DIR / "runs" / f"tuning-{args.stage}-{args.fill_model}-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}.md"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text("\n".join(lines), encoding="utf-8")
     print("\n".join(lines))
