@@ -25,7 +25,7 @@ over the top 20 by `min(4h volume, buy limit) × after-tax margin`, 2% tax, dump
 |---|---|
 | **Outbid by 100k** on both buy and sell offers | 50k–500k all beat 1gp in every tuning period; 100k had the best worst period. ≥ 1m starts eating the margin. |
 | **No single item over 25% of equity** (stock + open buy offer), **but always at least 1 unit** | Concentration risk: uncapped, one item (Malachi's claw, which had no published buy limit) built up 21 units and lost 352m. 20–50% all work; 25% is mid-plateau. The 1-unit floor matters below ~300m, where 25% is less than the cheapest eligible item (75m) and the cap alone blocks every trade. |
-| **Buy limit 2** for Malachi's claw and tooth (`BUY_LIMIT_OVERRIDES`) | Released 2026-10-12; the wiki mapping has no limit for them, which the code treats as unlimited. |
+| **Buy limit 2** for Malachi's claw and tooth (`BUY_LIMIT_OVERRIDES`); **1** for any other item the wiki has no limit for (`UNKNOWN_BUY_LIMIT`, 2026-10-23) | Released 2026-10-12; the wiki mapping has no limit for them, which the code used to treat as unlimited. |
 
 Rejected after testing: ranking on last-3-trades margin (hurt), pricing offers off recent averages (worst
 variant), "latest margin > 2× recent margin" outlier rule and "recent margin must be positive" (no effect once
@@ -94,7 +94,8 @@ The *relative* ranking of strategies is the defensible part. The *absolute* retu
 - **Bucket averages, not trades.** A bucket average can sit below our price even if no single trade did, and
   vice versa.
 - **31 days, ~700 fills.** Folds are ~10 days each; a few large trades still move them.
-- **Bonds are ~30% of profit.** Very liquid, so plausible, but check tax treatment (below) and run without them.
+- **Results above include Bonds (~30% of profit), which can't actually be flipped:** GE-bought bonds become
+  untradable. They're now excluded (`UNFLIPPABLE_ITEMS`, 2026-10-26), so re-run before relying on these numbers.
 
 ## Open questions for later research
 
@@ -108,11 +109,12 @@ The *relative* ranking of strategies is the defensible part. The *absolute* retu
 4. **Trade-count threshold** (6 vs 12 buckets) is noisy between periods.
 5. **Outbid as % of price** (e.g. 0.05–0.1%) instead of flat 100k, since items range 75m–500m. The model can't
    reward queue priority, the main real benefit of outbidding, so real gains may differ from modelled ones.
-6. **Unknown buy limits.** Malachi's claw and tooth are now hard-coded to 2 (`BUY_LIMIT_OVERRIDES`). Future
-   items released without a documented limit will again be treated as unlimited; consider a conservative
-   default (e.g. 2–10) instead of volume-only sizing. New items also tend to slide in price after release,
+6. **Unknown buy limits.** Malachi's claw and tooth are hard-coded to 2 (`BUY_LIMIT_OVERRIDES`); any other
+   item without a documented limit now gets 1 (`UNKNOWN_BUY_LIMIT`). Results above predate the default of 1
+   (at the time, only these two items lacked a limit). New items also tend to slide in price after release,
    which the drift filter doesn't catch; consider skipping items tradeable for under ~2–4 weeks.
-7. **GE tax rules.** Confirm the 2% rate, any per-trade cap, and whether bonds (or other items) are exempt.
+7. **GE tax rules.** RS3: 2% per item, rounded down, no cap; items under 50 gp pay none. The backtester still
+   rounds 2% of the whole sale instead (the lab's `per_item` tax is the exact rule).
 8. **Overnight gap.** Buy offers sit 10h between the 02:00 and 12:00 checks. Test cancelling buys at 02:00, or a
    tighter overnight filter.
 9. **Sell-side risk.** Sells are repriced to instabuy − outbid each check with no stop-loss or max holding time;
@@ -126,7 +128,11 @@ The *relative* ranking of strategies is the defensible part. The *absolute* retu
 
 ## Re-running
 
+`sync_cache.py` keeps `data/5m` (and `data/5m-all`, every item) current in the background; install it once with
+`powershell -ExecutionPolicy Bypass -File install_sync_task.ps1`, then prefer `--offline` runs.
+
 ```
+uv run sync_cache.py --status               # background sync progress
 uv run backtest_flips.py                    # finish/update the 5m download, then backtest `recommended`
 uv run backtest_flips.py --offline --compare
 uv run study_selection.py                   # candidate-level study + threshold sensitivity

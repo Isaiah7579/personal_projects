@@ -915,7 +915,7 @@ async function fetchAndRender() {
 
       const volume = Number(volumeById[itemId] || 0);
       const item = mapById.get(itemId) || {};
-      const buyLimit = item.limit || 0;
+      const buyLimit = item.limit || 1; // unknown limits count as 1
 
       const margin = sellPrice - buyPrice - sellPrice * 0.02; // GE tax: 2% of sell price, can push margin negative
       const marginPct = buyPrice > 0 ? (margin / buyPrice) * 100 : 0;

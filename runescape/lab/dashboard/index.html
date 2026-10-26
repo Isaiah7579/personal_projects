@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GE Strategy Lab</title>
+<style>
+  .viz-root {
+    color-scheme: light;
+    --page: #f9f9f7;
+    --surface-1: #fcfcfb;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #898781;
+    --grid: #e1e0d9;
+    --axis: #c3c2b7;
+    --border: rgba(11, 11, 11, 0.10);
+    --series-1: #2a78d6;
+    --series-2: #eb6834;
+    --series-3: #1baf7a;
+    --history: #898781;
+    --good-text: #006300;
+    --critical: #d03b3b;
+    --seq-1: #86b6ef; --seq-2: #5598e7; --seq-3: #2a78d6; --seq-4: #1c5cab; --seq-5: #104281;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) .viz-root {
+      color-scheme: dark;
+      --page: #0d0d0d;
+      --surface-1: #1a1a19;
+      --text-primary: #f0efec;
+      --text-secondary: #c3c2b7;
+      --text-muted: #898781;
+      --grid: #2c2c2a;
+      --axis: #383835;
+      --border: rgba(255, 255, 255, 0.10);
+      --series-1: #3987e5;
+      --series-2: #d95926;
+      --series-3: #199e70;
+      --history: #898781;
+      --good-text: #0ca30c;
+      --critical: #d03b3b;
+      --seq-1: #184f95; --seq-2: #256abf; --seq-3: #3987e5; --seq-4: #6da7ec; --seq-5: #b7d3f6;
+    }
+  }
+  :root[data-theme="dark"] .viz-root {
+    color-scheme: dark;
+    --series-3: #199e70;
+    --page: #0d0d0d;
+    --surface-1: #1a1a19;
+    --text-primary: #f0efec;
+    --text-secondary: #c3c2b7;
+    --text-muted: #898781;
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --border: rgba(255, 255, 255, 0.10);
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --history: #898781;
+    --good-text: #0ca30c;
+    --critical: #d03b3b;
+    --seq-1: #184f95; --seq-2: #256abf; --seq-3: #3987e5; --seq-4: #6da7ec; --seq-5: #b7d3f6;
+  }
+
+  * { box-sizing: border-box; }
+  body { margin: 0; }
+  .viz-root {
+    min-height: 100vh;
+    background: var(--page);
+    color: var(--text-primary);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+    padding: 20px 24px 48px;
+  }
+  header { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; }
+  h1 { font-size: 20px; font-weight: 600; margin: 0; }
+  .sub { color: var(--text-secondary); }
+  .muted { color: var(--text-muted); }
+  .filters { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
+  .filters label { color: var(--text-secondary); display: flex; gap: 6px; align-items: center; }
+  select, button {
+    font: inherit; color: var(--text-primary); background: var(--surface-1);
+    border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px;
+  }
+  button { cursor: pointer; }
+  .grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 16px; }
+  .card {
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+    padding: 14px 16px 12px; grid-column: span 12; min-width: 0; position: relative;
+  }
+  .span-6 { grid-column: span 6; }
+  .span-3 { grid-column: span 3; }
+  @media (max-width: 1100px) { .span-6 { grid-column: span 12; } .span-3 { grid-column: span 6; } }
+  .card h2 { font-size: 15px; font-weight: 600; margin: 0 0 2px; }
+  .card .desc { color: var(--text-secondary); font-size: 13px; margin: 0 0 8px; }
+  .tile .label { color: var(--text-secondary); font-size: 13px; }
+  .tile .value { font-size: 30px; font-weight: 600; margin-top: 2px; }
+  .tile.hero .value { font-size: 48px; line-height: 1.1; }
+  .tile .delta { font-size: 13px; margin-top: 2px; color: var(--text-secondary); }
+  .delta.up { color: var(--good-text); }
+  .delta.down { color: var(--critical); }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--text-secondary); margin-bottom: 6px; }
+  .legend .key { display: inline-flex; align-items: center; gap: 6px; }
+  .legend svg { overflow: visible; }
+  .chart { position: relative; width: 100%; }
+  .chart svg { display: block; width: 100%; overflow: visible; }
+  .chart text { font-size: 11px; fill: var(--text-muted); font-variant-numeric: tabular-nums; }
+  .chart text.label { fill: var(--text-secondary); }
+  .tooltip {
+    position: absolute; pointer-events: none; z-index: 5; display: none;
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12); padding: 8px 10px; font-size: 12px; min-width: 140px;
+  }
+  .tooltip .head { color: var(--text-secondary); margin-bottom: 4px; }
+  .tooltip .row { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+  .tooltip .row strong { color: var(--text-primary); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .tooltip .row span { color: var(--text-secondary); }
+  .multiples { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px 16px; }
+  .multiples .tile-title { font-size: 13px; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .multiples .tile-sub { font-size: 12px; color: var(--text-secondary); }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+  th { color: var(--text-secondary); font-weight: 500; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tr.selected td { background: color-mix(in srgb, var(--series-1) 8%, transparent); }
+  tr.clickable { cursor: pointer; }
+  details { margin-top: 8px; }
+  details summary { color: var(--text-secondary); cursor: pointer; font-size: 13px; }
+  details .scroll { max-height: 260px; overflow: auto; margin-top: 6px; }
+  .empty { color: var(--text-muted); padding: 24px 0; text-align: center; }
+  .stale { opacity: 0.55; transition: opacity 0.2s; }
+</style>
+</head>
+<body>
+<div class="viz-root" id="root">
+  <header>
+    <h1>GE Strategy Lab</h1>
+    <span class="sub" id="run-sub">Loading…</span>
+  </header>
+  <div class="filters">
+    <label>Run <select id="run-select"></select></label>
+    <label><input type="checkbox" id="live" checked> Live (every 5 s)</label>
+    <button id="theme" type="button">Theme: auto</button>
+    <span class="muted" id="updated"></span>
+  </div>
+
+  <div class="grid" id="content">
+    <div class="card tile hero span-3"><div class="label">Champion on validation</div>
+      <div class="value" id="kpi-champion">–</div><div class="delta" id="kpi-champion-delta"></div></div>
+    <div class="card tile span-3"><div class="label">Hand-written rules (recommended), same referee</div>
+      <div class="value" id="kpi-rules">–</div><div class="delta" id="kpi-rules-sub"></div></div>
+    <div class="card tile span-3"><div class="label">Generations</div>
+      <div class="value" id="kpi-gens">–</div><div class="delta" id="kpi-gens-sub"></div></div>
+    <div class="card tile span-3"><div class="label">Holdout looks (all runs)</div>
+      <div class="value" id="kpi-holdout">–</div><div class="delta">Never used to pick a champion</div></div>
+
+    <div class="card span-6">
+      <h2>Training fitness</h2>
+      <p class="desc">Each generation's variants on fresh training weeks: average of each variant's worst quarter of
+        weeks, % per week. Band: middle 50% and 80% of the population.</p>
+      <div class="legend" id="fit-legend"></div>
+      <div class="chart" id="fit-chart"></div>
+      <details><summary>Table view</summary><div class="scroll" id="fit-table"></div></details>
+    </div>
+    <div class="card span-6">
+      <h2>Training vs validation</h2>
+      <p class="desc">Average % per week of the current strategy: on its training weeks (10-generation average) and
+        on the validation weeks it never trains on. A widening gap is overfitting.</p>
+      <div class="legend" id="val-legend"></div>
+      <div class="chart" id="val-chart"></div>
+      <details><summary>Table view</summary><div class="scroll" id="val-table"></div></details>
+    </div>
+
+    <div class="card span-6">
+      <h2>Champion equity through the validation weeks</h2>
+      <p class="desc">Average equity across the validation weeks at a 1.8b stack, for each evaluation. Older
+        evaluations fade; the current champion is highlighted.</p>
+      <div class="legend" id="eq-legend"></div>
+      <div class="chart" id="eq-chart"></div>
+    </div>
+    <div class="card span-6">
+      <h2>Where the champion buys</h2>
+      <p class="desc">Share of each champion's buy volume (gp) by item price, in its median validation week. One row
+        per champion, newest at the bottom.</p>
+      <div class="chart" id="tier-chart"></div>
+    </div>
+
+    <div class="card" id="replay-card">
+      <h2>Trade replay</h2>
+      <p class="desc" id="replay-desc">The champion's median validation week at 1.8b: its most-traded items, with the
+        instasell and instabuy prices (30-minute averages) and every fill.</p>
+      <div class="legend" id="replay-legend"></div>
+      <div class="multiples" id="replay"></div>
+    </div>
+
+    <div class="card" id="params-card" hidden>
+      <h2>Rule settings over generations</h2>
+      <p class="desc">Each soft-rule setting of the current strategy as evolution moves it. The flat line is where
+        it started (the recommended rules' value).</p>
+      <div class="multiples" id="params"></div>
+    </div>
+
+    <div class="card">
+      <h2>Leaderboard</h2>
+      <p class="desc">Every run, best validation score first. Validation is what picks champions; forward scores
+        (data that arrived after a run's validation weeks) come from <code>lab.leaderboard</code>.</p>
+      <div id="board"></div>
+    </div>
+  </div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
