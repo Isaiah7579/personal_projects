@@ -4,6 +4,26 @@ version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
     "numpy>=2.5.4",
+    "pillow>=13.0.0",
+    "pystray>=0.19.5",
     "requests>=2.34.2",
     "tzdata>=2026.5",
 ]
+
+[dependency-groups]
+# The strategy lab (lab/): PyTorch on the GPU plus tests. A default group, so a plain `uv run` keeps torch installed.
+lab = [
+    "torch>=2.14",
+    "pytest>=8",
+]
+
+[tool.uv]
+default-groups = ["lab"]
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu130" }]
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true

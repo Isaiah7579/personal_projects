@@ -45,6 +45,7 @@ import argparse
 import gzip
 import json
 import math
+import os
 import sys
 import time
 from collections import Counter
@@ -77,6 +78,11 @@ BUY_LIMIT_OVERRIDES = {
     64195: 2,  # Malachi's claw
     64191: 2,  # Malachi's tooth
 }
+UNKNOWN_BUY_LIMIT = 1  # items with no limit in the mapping or the overrides
+# Items that can't be resold once bought on the GE, so can never be flipped (never loaded)
+UNFLIPPABLE_ITEMS = {
+    29492,  # Bond: GE-bought bonds become untradable
+}
 TOP_N_CANDIDATES = 20
 DP_GP_UNIT = 1_000_000  # optimizer budget resolution
 NEG_VALUE = -(10 ** 18)
@@ -97,17 +103,20 @@ ARCHIVE_DIR = DATA_DIR / "5m"
 # ---------------------------------------------------------------------------
 
 class Api:
-    def __init__(self) -> None:
+    def __init__(self, interval_s: float = REQUEST_INTERVAL_S) -> None:
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": USER_AGENT, "Accept": "application/json"})
+        self.interval_s = interval_s
         self.last_request = 0.0
+        self.requests = 0  # HTTP requests sent, retries included
 
     def get(self, path: str, params: dict | None = None):
         for attempt in range(6):
-            wait = self.last_request + REQUEST_INTERVAL_S - time.monotonic()
+            wait = self.last_request + self.interval_s - time.monotonic()
             if wait > 0:
                 time.sleep(wait)
             self.last_request = time.monotonic()
+            self.requests += 1
             try:
                 resp = self.session.get(f"{API_BASE}/{path}", params=params, timeout=30)
             except requests.RequestException:
@@ -121,27 +130,30 @@ class Api:
         raise RuntimeError(f"{path} {params} kept failing")
 
 
-def day_path(day: date) -> Path:
-    return ARCHIVE_DIR / f"{day.isoformat()}.json.gz"
+def day_path(day: date, directory: Path = ARCHIVE_DIR) -> Path:
+    return directory / f"{day.isoformat()}.json.gz"
 
 
-def read_day(day: date) -> dict[str, dict[str, list]]:
+def read_day(day: date, directory: Path = ARCHIVE_DIR) -> dict[str, dict[str, list]]:
     """{bucket ts: {item id: [avgHighPrice, highPriceVolume, avgLowPrice, lowPriceVolume]}}"""
-    path = day_path(day)
+    path = day_path(day, directory)
     return json.loads(gzip.decompress(path.read_bytes())) if path.exists() else {}
 
 
-def write_day(day: date, buckets: dict) -> None:
-    ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = day_path(day).with_suffix(".tmp")
-    tmp.write_bytes(gzip.compress(json.dumps(buckets, separators=(",", ":")).encode()))
+def write_day(day: date, buckets: dict, directory: Path = ARCHIVE_DIR) -> None:
+    """Add `buckets` to the day's file, keeping buckets another process (sync_cache.py) wrote meanwhile."""
+    directory.mkdir(parents=True, exist_ok=True)
+    path = day_path(day, directory)
+    merged = {**read_day(day, directory), **buckets}
+    tmp = path.with_suffix(f".{os.getpid()}.tmp")
+    tmp.write_bytes(gzip.compress(json.dumps(merged, separators=(",", ":")).encode()))
     for attempt in range(10):
         try:
-            tmp.replace(day_path(day))
+            tmp.replace(path)
             return
         except PermissionError:  # Windows: an --offline run is reading the file right now
             time.sleep(0.5)
-    tmp.replace(day_path(day))
+    tmp.replace(path)
 
 
 def compact_bucket(data: dict) -> dict[str, list]:
@@ -252,7 +264,7 @@ class ItemSeries:
         rows.sort()
         self.id = item_id
         self.name = meta.get("name", f"Item {item_id}")
-        self.limit = BUY_LIMIT_OVERRIDES.get(item_id) or meta.get("limit") or 0  # 0 = unknown, treated as no cap
+        self.limit = BUY_LIMIT_OVERRIDES.get(item_id) or meta.get("limit") or UNKNOWN_BUY_LIMIT
         self.buckets = {r[0]: r for r in rows}  # ts -> (ts, avgHigh, highVol, avgLow, lowVol)
         self.ts = np.array([r[0] for r in rows], dtype=np.int64)
         self.cum_volume = np.concatenate([[0], np.cumsum([r[2] + r[4] for r in rows])])
@@ -316,7 +328,7 @@ def load_market(start: int, end: int, mapping: list[dict]) -> list[ItemSeries]:
             if not start <= ts < end:
                 continue
             for id_str, (high, high_vol, low, low_vol) in bucket.items():
-                if max(high or 0, low or 0) < LOAD_MIN_PRICE:
+                if max(high or 0, low or 0) < LOAD_MIN_PRICE or int(id_str) in UNFLIPPABLE_ITEMS:
                     continue
                 rows.setdefault(int(id_str), []).append((ts, high, high_vol, low, low_vol))
         day += timedelta(days=1)
