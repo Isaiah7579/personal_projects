@@ -19,8 +19,10 @@
 - `advisor/index.html` runs the strategy lab's soft-rules champion (`lab/policies/soft_rules.py`), not the
   backtester's `recommended` rules. Its constants are that champion's parameters, rounded, copied from the run's
   `champion.json` (the run is named in the comment above them). When a better champion replaces it, copy the new
-  values and keep the selection logic matching `SoftRules.act` and `env.legalize`: top N items by score, then cash in
-  score order.
+  values and keep the selection logic in step with the lab: items best score first, each given its quantity while the
+  cash lasts. Two advisor-only tweaks (checked in the lab against the champion on validation): items are sized as if
+  the stack were cash × 8 ÷ free slots, and an item the cash left can't buy one of is skipped instead of keeping its
+  slot empty.
 - Items first traded within 30 days (per the wiki's daily history, which starts 2026-07-23) are flagged as new,
   not rejected. Skipped items and the free-slot count are stored in the browser's localStorage.
 
