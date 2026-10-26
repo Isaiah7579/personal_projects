@@ -4,6 +4,11 @@ Each parameter is unconstrained in the search space and mapped onto a sensible r
 greedy by score = max units x after-tax margin (the referee's legalize trims to slots and cash in that order)
 instead of the backtester's knapsack, and offers are priced a fraction of the spread inside the quotes instead of
 a fixed outbid. Only items in the check's universe can be bought.
+
+SoftRulesFill uses the same parameters but allocates the way a person would: items are ranked by what can actually
+be bought (the buy limit counted), and it walks them best first, buying what the cash left affords and skipping
+any it can't, until the free slots are full. SoftRules instead takes the top items by score and lets legalize trim
+cash in that order, so an item too dear for the cash left keeps its slot empty.
 """
 
 from __future__ import annotations
@@ -89,7 +94,7 @@ class SoftRules:
         return from_values({p.name: p.init for p in PARAMS})
 
     def bind(self, params: torch.Tensor, E: int) -> SoftRules:
-        return SoftRules(params, E)
+        return type(self)(params, E)
 
     def describe(self, params: torch.Tensor) -> dict[str, float]:
         return {k: float(v[0]) for k, v in to_values(params[None]).items()}
@@ -131,7 +136,38 @@ class SoftRules:
         share_qty = (v["max_item_share"][:, None] * obs.equity[:, None] / buy.clamp(min=1)).floor().long()
         max_qty = torch.minimum(vol4h.floor().long(), share_qty.clamp(min=1) - inv)
         ok &= max_qty >= 1
+        return Proposals.cat(sells, self.allocate(obs, sells, items, ok, buy, max_qty, margin))
+
+    def allocate(self, obs: Observation, sells: Proposals, items, ok, buy, max_qty, margin) -> Proposals:
+        """Buy proposals ranked by score; legalize keeps the top ones and trims them to the cash in that order."""
         score = (max_qty * margin).double()
-        buys = Proposals(torch.where(ok, items, -1), torch.full_like(items, BUY), buy, max_qty.clamp(min=0),
+        return Proposals(torch.where(ok, items, -1), torch.full_like(items, BUY), buy, max_qty.clamp(min=0),
                          torch.where(ok, score, -1.0).float())
-        return Proposals.cat(sells, buys)
+
+
+class SoftRulesFill(SoftRules):
+    """SoftRules that fills every free slot it can afford (see the module docstring)."""
+    name = "soft-rules-fill"
+
+    def allocate(self, obs: Observation, sells: Proposals, items, ok, buy, max_qty, margin) -> Proposals:
+        qty = torch.minimum(max_qty, obs.limit_left.gather(1, items.clamp(min=0))).clamp(min=0)
+        ok = ok & (qty >= 1)
+        score = torch.where(ok, (qty * margin).double(), -1.0)
+        order = score.argsort(dim=1, descending=True)
+        items, ok, buy, qty = (x.gather(1, order) for x in (items, ok, buy, qty))
+        selling = (sells.item >= 0) & (sells.qty > 0) & (sells.price > 0)
+        free = (obs.slots - selling.sum(1)).clamp(min=0)
+        left, used = obs.cash.clone(), torch.zeros_like(free)
+        take_qty = torch.zeros_like(qty)
+        for k in range(items.shape[1]):
+            afford = torch.minimum(qty[:, k], left // buy[:, k].clamp(min=1))
+            take = ok[:, k] & (used < free) & (afford >= 1)
+            take_qty[:, k] = torch.where(take, afford, 0)
+            left -= take_qty[:, k] * buy[:, k]
+            used += take.long()
+            if not bool((used < free).any()):
+                break
+        taken = take_qty > 0
+        prio = torch.arange(items.shape[1], 0, -1, device=items.device).float().expand_as(qty)
+        return Proposals(torch.where(taken, items, -1), torch.full_like(items, BUY), buy, take_qty,
+                         torch.where(taken, prio, -1.0))

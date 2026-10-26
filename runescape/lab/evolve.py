@@ -31,9 +31,9 @@ from lab.features import Features
 from lab.market import LAB_DIR
 from lab.policies.neural import Neural
 from lab.policies.rules import RulesPolicy
-from lab.policies.soft_rules import SoftRules
+from lab.policies.soft_rules import SoftRules, SoftRulesFill
 
-POLICIES = {"soft-rules": SoftRules, "neural": Neural}
+POLICIES = {"soft-rules": SoftRules, "soft-rules-fill": SoftRulesFill, "neural": Neural}
 RUNS_DIR = LAB_DIR / "runs"
 REPLAY_STACK = 1_800_000_000
 REPLAY_ITEMS = 8
@@ -111,6 +111,7 @@ def main() -> None:
     parser.add_argument("--obs-lag", type=int, default=300)
     parser.add_argument("--stack-min", type=float, default=1.5e9)
     parser.add_argument("--stack-max", type=float, default=6e9)
+    parser.add_argument("--slots", type=int, default=E.GE_SLOTS, help="GE slots the account has")
     parser.add_argument("--eval-every", type=int, default=5)
     parser.add_argument("--patience", type=int, default=0, help="stop after this many evals without a new "
                                                                     "champion (0 = never)")
@@ -119,10 +120,10 @@ def main() -> None:
     parser.add_argument("--item-split", action="store_true",
                         help="train (and pick champions) on half the items; also report validation on the other half")
     args = parser.parse_args()
-    sigma = args.sigma or (0.3 if args.policy == "soft-rules" else 0.05)
-    lr = args.lr or (0.05 if args.policy == "soft-rules" else 0.01)
-    weight_decay = args.weight_decay if args.weight_decay is not None else (0.0 if args.policy == "soft-rules"
-                                                                             else 0.001)
+    soft = issubclass(POLICIES[args.policy], SoftRules)
+    sigma = args.sigma or (0.3 if soft else 0.05)
+    lr = args.lr or (0.05 if soft else 0.01)
+    weight_decay = args.weight_decay if args.weight_decay is not None else (0.0 if soft else 0.001)
 
     torch.manual_seed(args.seed)
     rng = np.random.default_rng(args.seed)
@@ -134,7 +135,8 @@ def main() -> None:
     mkt.use_items(train_items)
     split = splits.make(market.t0, market.end)
     starts = splits.episode_starts(split.train, features.checks)
-    cfg = E.EnvConfig(fill_model=args.fill_model, haircut=args.haircut)
+    cfg = E.EnvConfig(fill_model=args.fill_model, haircut=args.haircut, slots=args.slots)
+    val_stacks = score.stacks_for(args.stack_min, args.stack_max)
     family = POLICIES[args.policy]
     policy = family()
 
@@ -142,9 +144,9 @@ def main() -> None:
     run_dir = RUNS_DIR / f"{stamp}-{args.policy}{'-' + args.name if args.name else ''}"
     (run_dir / "evals").mkdir(parents=True)
     config = {"policy": args.policy, "args": vars(args), "sigma": sigma, "lr": lr, "dim": family.dim,
-              "splits": split.to_json(), "market": {"t0": market.t0, "end": market.end, "items": market.N},
+              "val_stacks": val_stacks, "splits": split.to_json(), "market": {"t0": market.t0, "end": market.end, "items": market.N},
               "train_starts": len(starts), "started": int(time.time()),
-              "start_values": policy.describe(family.init_params()) if args.policy == "soft-rules" else None}
+              "start_values": policy.describe(family.init_params()) if soft else None}
     write_json(run_dir / "config.json", config)
     print(f"Run {run_dir.name}: {args.policy} ({family.dim} parameters), {2 * args.pairs + 1} variants × "
           f"{args.episodes} episodes per generation")
@@ -152,7 +154,8 @@ def main() -> None:
         print("  " + s.describe())
 
     print("Scoring the rules baseline (recommended) on validation...", flush=True)
-    baseline = score.evaluate(mkt, RulesPolicy(STRATEGIES["recommended"]), split.validation, cfg, args.obs_lag)
+    baseline = score.evaluate(mkt, RulesPolicy(STRATEGIES["recommended"]), split.validation, cfg, args.obs_lag,
+                              stacks=val_stacks)
     baseline.pop("starts")
     write_json(run_dir / "baseline.json", baseline)
     print(f"  recommended: {baseline['score']:+.4f} (worst {baseline['worst']:+.4f})")
@@ -192,16 +195,17 @@ def main() -> None:
                "center_mean": float(growth[0].mean()), "pop_mean": float(growth.mean()), "sigma": sigma,
                "norm": float(theta.norm()), "slot_use": float(res.slot_use.view(P, n_ep)[0].mean()),
                "fills": float((res.buy_fills + res.sell_fills).view(P, n_ep)[0].double().mean())}
-        if args.policy == "soft-rules":
+        if soft:
             row["values"] = policy.describe(theta)
 
         if gen % args.eval_every == 0 or gen == args.gens - 1:
-            card = score.evaluate(mkt, policy, split.validation, cfg, args.obs_lag, params=theta)
+            card = score.evaluate(mkt, policy, split.validation, cfg, args.obs_lag, stacks=val_stacks, params=theta)
             card.pop("starts")
             row["val"] = {k: card[k] for k in ("score", "worst", "cvar25", "by_stack", "max_drawdown")}
             if args.item_split:  # the same weeks, buying only items it never trained on
                 mkt.use_items(1)
-                unseen = score.evaluate(mkt, policy, split.validation, cfg, args.obs_lag, params=theta)
+                unseen = score.evaluate(mkt, policy, split.validation, cfg, args.obs_lag, stacks=val_stacks,
+                                        params=theta)
                 mkt.use_items(train_items)
                 row["val_unseen"] = {k: unseen[k] for k in ("score", "worst", "cvar25")}
             write_json(run_dir / "evals" / f"gen_{gen:05d}.json",

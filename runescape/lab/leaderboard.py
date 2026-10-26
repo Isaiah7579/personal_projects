@@ -53,10 +53,12 @@ def main() -> None:
         with splits.HOLDOUT_LOG.open("a", encoding="utf-8") as f:
             f.write(json.dumps({"time": int(time.time()), "start": forward.start, "end": forward.end,
                                 "what": f"forward score of {d.name}", "reason": args.reason}) + "\n")
-        cfg = E.EnvConfig(fill_model=a["fill_model"], haircut=a["haircut"])
+        cfg = E.EnvConfig(fill_model=a["fill_model"], haircut=a["haircut"], slots=a.get("slots", E.GE_SLOTS))
+        stacks = tuple(config.get("val_stacks", score.STACKS))
         champion = torch.load(d / "champion.pt")
-        card = score.evaluate(mkt, POLICIES[champion["policy"]](), forward, cfg, lag, params=champion["params"])
-        rules = score.evaluate(mkt, RulesPolicy(STRATEGIES["recommended"]), forward, cfg, lag)
+        card = score.evaluate(mkt, POLICIES[champion["policy"]](), forward, cfg, lag, stacks=stacks,
+                              params=champion["params"])
+        rules = score.evaluate(mkt, RulesPolicy(STRATEGIES["recommended"]), forward, cfg, lag, stacks=stacks)
         result = {"score": card["score"], "worst": card["worst"], "cvar25": card["cvar25"],
                   "by_stack": card["by_stack"], "rules": rules["score"], "rules_worst": rules["worst"],
                   "start": forward.start, "end": forward.end, "days": (forward.end - forward.start) / DAY,

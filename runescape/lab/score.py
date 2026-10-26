@@ -19,6 +19,14 @@ from lab.splits import EPISODE, Split, episode_starts
 STACKS = (1_500_000_000, 1_800_000_000, 3_000_000_000, 6_000_000_000)
 
 
+def stacks_for(lo: float, hi: float, n: int = 4) -> tuple[int, ...]:
+    """Validation stacks for a run trained on stacks in [lo, hi]: STACKS for the default range, else n log-spaced
+    stacks (rounded to 1m)."""
+    if (lo, hi) == (STACKS[0], STACKS[-1]):
+        return STACKS
+    return tuple(int(round(lo * (hi / lo) ** (k / (n - 1)) / 1e6)) * 1_000_000 for k in range(n))
+
+
 def cvar(x: torch.Tensor, q: float = 0.25, dim: int = -1) -> torch.Tensor:
     """Mean of the worst ceil(q * n) values along dim."""
     k = max(1, math.ceil(q * x.shape[dim]))
