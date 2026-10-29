@@ -446,7 +446,7 @@ function renderReplay() {
                               { name: 'Sell fill', color: 'var(--series-2)', shape: 'down' }]);
   if (!rep || !rep.items.length) { div('empty', 'No champion trades yet', box); return; }
   $('replay-desc').textContent = `Champion from gen ${state.champion.gen}, its median validation week (from ` +
-    `${fmtDate(rep.episode_start)}) at 1.8b: ${fmtPct(weekly(rep.growth))} that week. Its most-traded items, with ` +
+    `${fmtDate(rep.episode_start)}) at ${rep.stack ? fmtGp(rep.stack) : '1.8b'}: ${fmtPct(weekly(rep.growth))} that week. Its most-traded items, with ` +
     'the instasell and instabuy prices (30-minute averages) and every fill.';
   for (const item of rep.items) {
     const tile = div(null, null, box);

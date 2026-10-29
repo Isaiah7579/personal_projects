@@ -80,10 +80,12 @@ def holdout_looks() -> int:
 
 def episode_starts(split: Split, checks: np.ndarray, length: int = EPISODE) -> list[int]:
     """Check times that can start an episode in `split`: each day's first check (the first after the overnight
-    gap, 12:00 with the default CHECK_TIMES), for episodes ending by split.end."""
+    gap, the schedule's longest less an hour for DST: 12:00 with the default CHECK_TIMES), for episodes ending by
+    split.end."""
+    overnight = int(np.diff(checks).max()) - 3600 if len(checks) > 1 else 0
     starts, prev = [], None
     for t in map(int, checks):
-        if (prev is None or t - prev >= 6 * 3600) and split.start <= t and t + length <= split.end:
+        if (prev is None or t - prev >= overnight) and split.start <= t and t + length <= split.end:
             starts.append(t)
         prev = t
     return starts

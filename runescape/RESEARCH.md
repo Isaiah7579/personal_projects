@@ -124,6 +124,16 @@ The *relative* ranking of strategies is the defensible part. The *absolute* retu
 11. **More manipulation signals.** Deviation from the official GE guide price (historical guide prices would be
     needed, e.g. from the Weird Gloop exchange API), spread volatility, repeated same-size trades.
 12. **Check-time schedule.** Compare against hourly checks to see what the fixed CDT schedule costs.
+    *Partly answered (strategy lab, 2026-10-28; 8 slots, 2–6b stacks, validation weeks Sep 28 – Oct 11):*
+    checking in 3 times a day (12:00, 18:00, 00:00 Central) instead of the 9-check schedule roughly halves the
+    weekly return: +15.3% vs +29.4% for the best champion, and +6.0% vs +15.8% for the hand-written rules.
+    Retraining for 3 checks a day didn't help: that run stalled early (+11.9% at 3 a day), and the 9-a-day
+    champion did best at 3 a day on validation. On the 17 days after validation (one logged holdout look) the
+    three champions were within 2 points of each other (+11.5–13.5% a week at 3 a day).
+14. **Idle cash.** With every slot full, a third or more of a 3b+ stack sits idle: most items have a buy limit
+    of 2. Ranking by limit-capped profit per slot (which fills slots with pricier items) did worse on both
+    validation and training at 6 and 8 slots (e.g. 8 slots, validation: +33.5% vs +41.8% a week): pricier
+    items turned only 34% (300m–1b) or less (1b+ lost money) of their quoted margin into profit.
 13. **Buy-limit semantics.** The model uses a rolling 4h window; RS3 counts 4h from the first purchase.
 
 ## Re-running

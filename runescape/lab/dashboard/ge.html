@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GE Replay</title>
+<style>
+  :root {
+    --ink: #e8dcc0;
+    --ink-dim: #a89a7a;
+    --gold: #e0b452;
+    --green: #3ee03e;
+    --red: #ff4a3a;
+    --frame: #6b5a3a;
+    --frame-dark: #3d3324;
+    --panel: #2a2419;
+    --slot: #3a3123;
+    --well: #1f1a12;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px; min-height: 100vh;
+    background: radial-gradient(ellipse at top, #2c3a44, #121619 70%);
+    font: 12px/1.3 Verdana, "Trebuchet MS", sans-serif; color: var(--ink);
+    display: flex; flex-direction: column; align-items: center; gap: 12px;
+  }
+  .window, .controls, .activity {
+    width: 780px; background: #1b1711;
+    border: 2px solid var(--frame); box-shadow: 0 0 0 1px #0c0a07, 0 10px 30px rgba(0, 0, 0, 0.6);
+    border-radius: 4px;
+  }
+
+  /* title bar and tabs */
+  .titlebar {
+    display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 8px 0 10px;
+    background: linear-gradient(#3d3324, #251f16); border-bottom: 1px solid var(--frame);
+  }
+  .titlebar .title {
+    flex: 1; font: bold 20px Georgia, "Times New Roman", serif; letter-spacing: 1px; font-variant: small-caps;
+    color: var(--gold); text-shadow: 1px 1px 0 #000;
+  }
+  .tb-btn {
+    width: 26px; height: 26px; display: grid; place-items: center; border: 1px solid #c9a35a; border-radius: 2px;
+    font: bold italic 15px Georgia, serif; color: #f4e7c4; background: linear-gradient(#5b4b30, #3b3020);
+  }
+  .tb-btn.close { background: linear-gradient(#9b3a26, #6a2215); font-style: normal; }
+  .tabs { display: flex; gap: 4px; padding: 8px 10px 0; background: var(--panel); }
+  .tab {
+    padding: 6px 14px; border: 1px solid var(--frame); border-bottom: none; border-radius: 6px 6px 0 0;
+    background: linear-gradient(#2f281d, #231d14); color: var(--ink-dim);
+  }
+  .tab.active { background: linear-gradient(#4c402c, #3a3123); color: var(--ink); }
+
+  /* body: slots on the left, backpack, pouch and collect box on the right */
+  .body {
+    display: grid; grid-template-columns: 1fr 200px; gap: 8px; padding: 8px;
+    background: var(--panel); border-top: 1px solid var(--frame);
+  }
+  .slots { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .slot {
+    position: relative; height: 112px; padding: 4px 6px 6px;
+    background: linear-gradient(#433826, var(--slot)); border: 1px solid #5d4e34; border-radius: 2px;
+    box-shadow: inset 0 0 0 1px #1d1810;
+  }
+  .slot-head { text-align: center; font-weight: bold; color: var(--ink); text-shadow: 1px 1px 0 #000; }
+  .abort {
+    position: absolute; top: 3px; right: 4px; width: 20px; height: 20px; display: grid; place-items: center;
+    background: linear-gradient(#8a3322, #5f1f12); border: 1px solid #c9a35a; color: #f4e7c4; font-size: 12px;
+  }
+  .slot-main { display: flex; gap: 6px; margin-top: 6px; }
+  .icon {
+    position: relative; flex: none; width: 40px; height: 36px; display: grid; place-items: center;
+    background: var(--well); border: 1px solid #5d4e34;
+  }
+  .icon img { max-width: 36px; max-height: 32px; }
+  .icon .initials { color: var(--ink-dim); font-size: 10px; }
+  .count {
+    position: absolute; top: -1px; left: 1px; color: #ffff00; font-size: 11px; font-weight: bold;
+    text-shadow: 1px 1px 0 #000, -1px 0 0 #000;
+  }
+  .name { font-size: 11px; line-height: 1.25; max-height: 42px; overflow: hidden; }
+  .price-row { display: flex; justify-content: space-between; align-items: baseline; height: 16px; margin-top: 2px; }
+  .price { color: var(--green); font-size: 11px; text-shadow: 1px 1px 0 #000; }
+  .pl { font-weight: bold; font-size: 13px; text-shadow: 1px 1px 0 #000; }
+  .pl.gain { color: var(--green); }
+  .pl.loss { color: var(--red); }
+  .bar {
+    position: absolute; left: 6px; right: 6px; bottom: 6px; height: 16px;
+    background: var(--well); border: 1px solid #5d4e34; text-align: center;
+  }
+  .bar .fill { position: absolute; inset: 0 auto 0 0; background: #b87a14; }
+  .bar.done .fill { background: #1f7a1f; }
+  .bar span { position: relative; font-size: 11px; line-height: 14px; text-shadow: 1px 1px 0 #000; }
+  .slot.empty .buttons { display: flex; justify-content: center; gap: 14px; margin-top: 10px; }
+  .slot.empty .btn { display: flex; flex-direction: column; align-items: center; gap: 2px; color: var(--ink); }
+  .slot.empty .btn .box {
+    width: 38px; height: 38px; display: grid; place-items: center;
+    background: linear-gradient(#4a3e2a, #2f281c); border: 1px solid #7a6844; border-radius: 3px;
+  }
+  .slot.locked { opacity: 0.45; }
+  .slot.locked .note, .slot.lent .note { margin-top: 26px; text-align: center; color: var(--ink-dim); }
+  .slot.lent .well { width: 34px; height: 34px; margin: 10px auto 0; background: var(--well); border: 1px solid #5d4e34; }
+  .slot.lent .slot-head { color: var(--ink-dim); font-weight: normal; }
+
+  .side { display: flex; flex-direction: column; gap: 6px; }
+  .backpack { background: #231e15; border: 1px solid #5d4e34; padding: 4px 6px 6px; }
+  .backpack .head { text-align: center; font-size: 10px; letter-spacing: 1px; color: var(--ink); margin-bottom: 4px; }
+  .bp-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 3px; }
+  .bp-cell {
+    position: relative; height: 34px; display: grid; place-items: center;
+    background: #2b251b; border: 1px solid #3e3526;
+  }
+  .bp-cell img { max-width: 34px; max-height: 30px; }
+  .pouch {
+    display: flex; align-items: center; gap: 6px; padding: 5px 8px;
+    background: #231e15; border: 1px solid #5d4e34; color: var(--green); font-size: 12px; text-shadow: 1px 1px 0 #000;
+  }
+  .collect { background: #231e15; border: 1px solid #5d4e34; padding: 4px 6px 6px; text-align: center; }
+  .collect .head { color: var(--ink); font-weight: bold; font-size: 11px; margin-bottom: 4px; }
+  .collect .cbtn {
+    display: block; width: 100%; margin-top: 4px; padding: 5px 0; border: 1px solid #1a160f; border-radius: 2px;
+    font: bold 10px Verdana, sans-serif; letter-spacing: 0.5px;
+  }
+  .cbtn.backpack-btn { background: linear-gradient(#a8873a, #7a6024); color: #3a2c10; }
+  .cbtn.bank-btn { background: linear-gradient(#3e464f, #2a3036); color: #6f7a85; }
+  .cbtn.idle { filter: saturate(0.2) brightness(0.7); }
+
+  /* replay controls */
+  .controls { padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; background: var(--panel); }
+  .status { display: flex; justify-content: space-between; gap: 12px; }
+  .status .when { font-weight: bold; color: var(--gold); }
+  .status .phase { color: var(--ink); }
+  .status .worth { color: var(--ink-dim); text-align: right; }
+  .row { display: flex; align-items: center; gap: 6px; }
+  .row button, .row select {
+    height: 28px; padding: 0 10px; font: bold 12px Verdana, sans-serif; color: var(--ink);
+    background: linear-gradient(#5b4b30, #3b3020); border: 1px solid #8a754c; border-radius: 3px; cursor: pointer;
+  }
+  .row button:hover { filter: brightness(1.15); }
+  .row button:focus-visible, .row select:focus-visible, input[type=range]:focus-visible { outline: 2px solid var(--gold); }
+  .row .grow { flex: 1; }
+  .row label { color: var(--ink-dim); display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+  #replay { max-width: 230px; }
+  input[type=range] { width: 100%; accent-color: var(--gold); }
+  .hint { color: var(--ink-dim); font-size: 11px; }
+
+  .activity { padding: 8px 12px; background: var(--panel); max-height: 220px; overflow: auto; }
+  .activity .head { color: var(--gold); font-weight: bold; margin-bottom: 4px; }
+  .activity ul { list-style: none; margin: 0; padding: 0; }
+  .activity li { padding: 2px 0; border-bottom: 1px solid #3a3123; display: flex; gap: 8px; }
+  .activity li .what { width: 84px; flex: none; color: var(--ink-dim); }
+  .activity li .detail { flex: 1; }
+  .activity .gain { color: var(--green); }
+  .activity .loss { color: var(--red); }
+  .error { color: var(--red); padding: 20px; }
+</style>
+</head>
+<body>
+<div class="window" id="window">
+  <div class="titlebar">
+    <svg width="30" height="28" viewBox="0 0 30 28" aria-hidden="true">
+      <g stroke="#e0b452" stroke-width="2" fill="none" stroke-linecap="round">
+        <path d="M15 3v21M7 24h16M5 7h20"/><path d="M5 7l-4 9M5 7l4 9M25 7l-4 9M25 7l4 9"/>
+      </g>
+      <path d="M1 16a4 3 0 0 0 8 0zM21 16a4 3 0 0 0 8 0z" fill="#8a6dc9"/>
+    </svg>
+    <span class="title">Grand Exchange</span>
+    <span class="tb-btn">i</span><span class="tb-btn close">✕</span>
+  </div>
+  <div class="tabs">
+    <span class="tab active">Grand Exchange</span><span class="tab">Sale History</span><span class="tab">Sets</span>
+    <span class="tab">Favourites</span>
+  </div>
+  <div class="body">
+    <div class="slots" id="slots"></div>
+    <div class="side">
+      <div class="backpack"><div class="head">BACKPACK</div><div class="bp-grid" id="backpack"></div></div>
+      <div class="pouch" id="pouch-box">
+        <svg width="16" height="14" viewBox="0 0 16 14" aria-hidden="true">
+          <ellipse cx="8" cy="10" rx="6" ry="3" fill="#b8860b"/><ellipse cx="8" cy="8" rx="6" ry="3" fill="#e0b452"/>
+          <ellipse cx="8" cy="5" rx="6" ry="3" fill="#f2cf63" stroke="#8a6410" stroke-width="0.6"/>
+        </svg>
+        <span id="pouch">–</span>
+      </div>
+      <div class="collect">
+        <div class="head">COLLECT ALL</div>
+        <span class="cbtn backpack-btn" id="collect-btn">TO BACKPACK</span>
+        <span class="cbtn bank-btn">TO BANK</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="controls">
+  <div class="status">
+    <div><span class="when" id="when">Loading…</span> <span class="phase" id="phase"></span></div>
+    <div class="worth" id="worth"></div>
+  </div>
+  <input type="range" id="scrub" min="0" max="0" value="0" aria-label="Replay position">
+  <div class="row">
+    <button id="first" title="First check-in (Home)">⏮</button>
+    <button id="prev-check" title="Previous check-in (Shift+←)">◀◀</button>
+    <button id="prev" title="Previous step (←)">◀</button>
+    <button id="play" title="Play / pause (Space)">▶ Play</button>
+    <button id="next" title="Next step (→)">▶</button>
+    <button id="next-check" title="Next check-in (Shift+→)">▶▶</button>
+    <button id="last" title="End of the replay (End)">⏭</button>
+    <span class="grow"></span>
+    <label>Per check-in <select id="delay">
+      <option value="250">0.25 s</option><option value="500">0.5 s</option><option value="1000" selected>1 s</option>
+      <option value="2000">2 s</option><option value="4000">4 s</option>
+    </select></label>
+    <label>Replay <select id="replay"></select></label>
+  </div>
+  <div class="hint" id="hint"></div>
+</div>
+
+<div class="activity"><div class="head" id="activity-head">What happened</div><ul id="activity"></ul></div>
+
+<script src="ge.js"></script>
+</body>
+</html>

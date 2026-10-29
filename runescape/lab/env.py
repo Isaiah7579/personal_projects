@@ -187,7 +187,10 @@ class Result:
     ep: torch.Tensor  # [B]
     buy_fills: torch.Tensor  # [B] (offer, bucket) fill events, like Simulator.fills["buy"]
     sell_fills: torch.Tensor
-    trades: list[tuple] = field(default_factory=list)  # (account, bucket ts, item, side, qty, price) if tracked
+    trades: list[tuple] = field(default_factory=list)  # (account, bucket ts, item, side, qty, price, slot) if
+    # tracked
+    books: list[tuple] = field(default_factory=list)  # (account, check ts, slot, item, side, price, qty) if tracked:
+    # the book placed at each check
     ledger: dict[str, torch.Tensor] = field(default_factory=dict)  # [B, N] per-item totals if tracked
     slot_use: torch.Tensor | None = None  # [B] mean offers placed per check
 
@@ -226,7 +229,7 @@ def run(mkt: MarketOnDevice, policy, episodes: Episodes, cash: torch.Tensor, ep:
     offers_placed = torch.zeros_like(buy_fills)
     done = torch.zeros(B, dtype=torch.bool, device=dev)
     final_cash = torch.zeros_like(cash)
-    trades, ledger = [], {}
+    trades, books, ledger = [], [], {}
     if track:
         ledger = {k: torch.zeros(B, N, dtype=torch.int64, device=dev)
                   for k in ("bought", "spent", "sold", "sell_net", "tax", "dumped", "dump_net")}
@@ -274,6 +277,10 @@ def run(mkt: MarketOnDevice, policy, episodes: Episodes, cash: torch.Tensor, ep:
         s_filled = torch.zeros_like(s_qty)
         cash = cash - torch.where(active, reserve, 0)
         offers_placed += live.sum(1)
+        if track:
+            for b, k in live.nonzero().tolist():
+                books.append((b, int(t_b[b]), k, int(s_item[b, k]), int(s_side[b, k]), int(s_price[b, k]),
+                              int(s_qty[b, k])))
         is_sell = live & (s_side == SELL)
         for k in range(S):  # one slot at a time: padded slots all point at item 0
             col = s_item[:, k].clamp(min=0)
@@ -322,7 +329,7 @@ def run(mkt: MarketOnDevice, policy, episodes: Episodes, cash: torch.Tensor, ep:
                     for q, side_id in ((q_buy, BUY), (q_sell, SELL)):
                         for b, k in (q > 0).nonzero().tolist():
                             trades.append((b, int(ts[b]), int(s_item[b, k]), side_id, int(q[b, k]),
-                                           int(s_price[b, k])))
+                                           int(s_price[b, k]), k))
 
         # 4. episodes ending after this interval: cancel buys, dump everything
         ending = active & last[ep]
@@ -347,5 +354,5 @@ def run(mkt: MarketOnDevice, policy, episodes: Episodes, cash: torch.Tensor, ep:
             equity_log[ar, n_checks[ep]] = torch.where(ending, cash, equity_log[ar, n_checks[ep]])
             done |= ending
 
-    return Result(final_cash, start_cash, equity_log, ep, buy_fills, sell_fills, trades, ledger,
+    return Result(final_cash, start_cash, equity_log, ep, buy_fills, sell_fills, trades, books, ledger,
                   offers_placed.double() / n_checks[ep].double())

@@ -11,7 +11,7 @@ import math
 
 import numpy as np
 
-from backtest_flips import DAY, FIVE_MIN, GE_TAX, LOCAL_TZ, check_times
+from backtest_flips import CHECK_TIMES, DAY, FIVE_MIN, GE_TAX, LOCAL_TZ, check_times
 from lab.market import LAB_DIR, Market
 
 VERSION = 1
@@ -120,15 +120,18 @@ def compute(market: Market, checks: np.ndarray, obs_lag: int) -> dict[str, np.nd
 
 
 class Features:
-    """Raw features at every check time of the market's window, cached on disk."""
+    """Raw features at every check time of the market's window (local times `check_at`, default CHECK_TIMES),
+    cached on disk."""
 
-    def __init__(self, market: Market, obs_lag: int, cache: bool = True):
+    def __init__(self, market: Market, obs_lag: int, cache: bool = True, check_at: tuple[str, ...] = CHECK_TIMES):
         self.market = market
         self.obs_lag = obs_lag
-        self.checks = np.array(check_times(market.t0 + DAY, market.end), dtype=np.int64)
+        self.check_at = tuple(check_at)
+        self.checks = np.array(check_times(market.t0 + DAY, market.end, self.check_at), dtype=np.int64)
         min_price = int(min(np.nanmin(market.high), np.nanmin(market.low)))
+        schedule = "" if self.check_at == CHECK_TIMES else "-c" + ".".join(t.replace(":", "") for t in self.check_at)
         path = LAB_DIR / "cache" / (f"features-v{VERSION}-{market.t0}-{market.end}-n{market.N}-p{min_price}"
-                                    f"-lag{obs_lag}.npz")
+                                    f"-lag{obs_lag}{schedule}.npz")
         if cache and path.exists():
             with np.load(path) as z:
                 self.raw = {k: z[k] for k in z.files}
@@ -136,8 +139,8 @@ class Features:
             self.raw = compute(market, self.checks, obs_lag)
         if cache and not path.exists():
             path.parent.mkdir(parents=True, exist_ok=True)
-            for old in path.parent.glob(f"features-v{VERSION}-*-p{min_price}-lag{obs_lag}.npz"):
-                old.unlink(missing_ok=True)  # an older cache end; keep one per price floor and lag
+            for old in path.parent.glob(f"features-v{VERSION}-*-p{min_price}-lag{obs_lag}{schedule}.npz"):
+                old.unlink(missing_ok=True)  # an older cache end; keep one per price floor, lag and schedule
             np.savez(path, **self.raw)
         self.check_index = {int(t): c for c, t in enumerate(self.checks)}
 

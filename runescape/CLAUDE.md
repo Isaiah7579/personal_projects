@@ -49,4 +49,10 @@
   the end-of-episode dump, RS3 per-item tax rounding.
 - Policies see the market only through `Observation` at the check's index; no item IDs or names go into learned
   policies. `uv run pytest lab/tests` includes the look-ahead test.
+- `uv run python -m lab.replay` runs a champion (by default the newest soft-rules one, as the advisor runs it,
+  from 1.024b with 6 slots) over the whole archive as one account and writes every decision as GE slot events
+  (place / fill / collect / cancel / dump) to `data/lab/replays/`. It reads forward data, so it logs a holdout look.
+  The dashboard's `ge.html` plays a replay back as the in-game GE screen, backpack and money pouch.
+- `lab.evolve --checks 12:00,18:00,00:00` trains for another check-in schedule (local times; default
+  `CHECK_TIMES`). The schedule is saved in the run's config, and `lab.replay` and `lab.leaderboard` use it.
 - Runs, caches and logs live under `data/lab/` (gitignored).
