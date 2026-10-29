@@ -211,10 +211,9 @@
 
 <h1>GE Flip Advisor</h1>
 <div class="notice">
-  <strong>Update, Oct 28:</strong> the strategy is retuned for a 2–6b cash stack with all 8 GE slots, and tested
-  for checking in just 3 times a day (noon, 6 pm and midnight Central). Checking in 3 times a day still pays, but
-  about half as well: roughly +15% a week in simulation, against +29% for checking in 9 times a day. Simulated fills
-  ignore other flippers, so expect less in game.
+  <strong>Update, Oct 28:</strong> the strategy is retuned for a 2–6b cash stack with all 8 GE slots, checking in
+  9 times a day. It made roughly +29% a week in simulation on the validation weeks. Simulated fills ignore other
+  flippers, so expect less in game.
 </div>
 <div class="subtitle">
   Enter your cash stack to see what to buy, or an item to see what to buy and sell it for.
@@ -312,8 +311,8 @@
 <script>
 // Strategy: the strategy lab's evolved soft-rules champion (lab/policies/soft_rules.py; run
 // 20261028-235502-soft-rules-advisor-9x-8slots-2-6b, generation 40: 8 slots, 2-6b stacks), with its parameters
-// rounded. It was picked over the run trained for 3 check-ins a day because it did better at 3 a day on the
-// validation weeks. Re-copy them from that run's champion.json when a better champion replaces it.
+// rounded. It's the best champion on the validation weeks for the default 9 check-ins a day. Re-copy them from that
+// run's champion.json when a better champion replaces it.
 const API = 'https://prices.runescape.wiki/api/v2/rs';
 const MIN_BUY_PRICE = 28_800_000;
 const MAX_BUY_PRICE = 1_740_000_000;
