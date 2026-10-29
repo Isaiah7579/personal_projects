@@ -11,8 +11,14 @@
 ## Unflippable items
 
 - Bonds bought on the GE become untradable, so they can never be flipped. They're listed in `UNFLIPPABLE_ITEMS`
-  in both `backtest_flips.py` and `advisor/index.html` (keep in sync); `load_market` and `lab/market.py` never load
-  them, and the advisor never recommends them.
+  in `backtest_flips.py`, `advisor/index.html` and `flip-finder/index.html` (keep in sync); `load_market` and
+  `lab/market.py` never load them, and neither page lists them.
+
+## Pages
+
+- GitHub Pages serves `main`. `index.html` only redirects to `advisor/` (the GE Flip Advisor); `flip-finder/` is the
+  older Flip Finder table (live wiki prices, filters, journal, price alerts, Google Drive sync). They link to each
+  other.
 
 ## Advisor strategy
 
