@@ -21,7 +21,7 @@ from backtest_flips import DAY, STRATEGIES, fmt_ts
 from lab import env as E
 from lab import market as M
 from lab import score, splits
-from lab.evolve import POLICIES, RUNS_DIR, write_json
+from lab.evolve import POLICIES, RUNS_DIR, check_schedule, write_json
 from lab.features import Features
 from lab.policies.rules import RulesPolicy
 
@@ -37,14 +37,15 @@ def main() -> None:
     if not runs:
         raise SystemExit("No runs with a champion yet.")
     market = M.load()
-    devices: dict[int, E.MarketOnDevice] = {}
+    devices: dict[tuple, E.MarketOnDevice] = {}
     for d in runs:
         config = json.loads((d / "config.json").read_text(encoding="utf-8"))
         a = config["args"]
         lag = a["obs_lag"]
-        if lag not in devices:
-            devices[lag] = E.MarketOnDevice(market, Features(market, lag), "cuda")
-        mkt = devices[lag]
+        key = (lag, check_schedule(a))
+        if key not in devices:
+            devices[key] = E.MarketOnDevice(market, Features(market, lag, check_at=key[1]), "cuda")
+        mkt = devices[key]
         forward = splits.Split("forward", config["splits"]["validation"]["end"], market.end)
         if forward.end - forward.start < splits.EPISODE:
             print(f"{d.name}: only {(forward.end - forward.start) / DAY:.1f} days after its validation; skipped")

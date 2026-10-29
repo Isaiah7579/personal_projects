@@ -28,6 +28,10 @@
     padding: 24px 16px;
   }
   h1 { font-size: 1.4rem; margin: 0 0 4px 0; }
+  .notice {
+    background: color-mix(in srgb, var(--accent) 12%, var(--panel)); border: 1px solid var(--accent);
+    border-radius: 8px; padding: 10px 14px; margin: 8px 0 14px 0; font-size: 0.85rem; line-height: 1.5;
+  }
   .subtitle { color: var(--muted); font-size: 0.85rem; margin-bottom: 20px; line-height: 1.5; }
   a { color: var(--accent); }
   .panel {
@@ -206,6 +210,12 @@
 <body>
 
 <h1>GE Flip Advisor</h1>
+<div class="notice">
+  <strong>Update, Oct 28:</strong> the strategy is retuned for a 2–6b cash stack with all 8 GE slots, and tested
+  for checking in just 3 times a day (noon, 6 pm and midnight Central). Checking in 3 times a day still pays, but
+  about half as well: roughly +15% a week in simulation, against +29% for checking in 9 times a day. Simulated fills
+  ignore other flippers, so expect less in game.
+</div>
 <div class="subtitle">
   Enter your cash stack to see what to buy, or an item to see what to buy and sell it for.
   <!-- <a href="../">Flip Finder →</a> (Flip Finder disabled for now) -->
@@ -301,20 +311,21 @@
 
 <script>
 // Strategy: the strategy lab's evolved soft-rules champion (lab/policies/soft_rules.py; run
-// 20261026-171009-soft-rules-soft-no-bonds, generation 40), with its parameters rounded. Re-copy them from that
-// run's champion.json when a better champion replaces it.
+// 20261028-235502-soft-rules-advisor-9x-8slots-2-6b, generation 40: 8 slots, 2-6b stacks), with its parameters
+// rounded. It was picked over the run trained for 3 check-ins a day because it did better at 3 a day on the
+// validation weeks. Re-copy them from that run's champion.json when a better champion replaces it.
 const API = 'https://prices.runescape.wiki/api/v2/rs';
-const MIN_BUY_PRICE = 27_800_000;
-const MAX_BUY_PRICE = 1_680_000_000;
-const MIN_4H_VOLUME_GP = 10_400_000;
-const MIN_MARGIN_PCT = 0.0006;    // after-tax margin as a share of the buy price
+const MIN_BUY_PRICE = 28_800_000;
+const MAX_BUY_PRICE = 1_740_000_000;
+const MIN_4H_VOLUME_GP = 9_200_000;
+const MIN_MARGIN_PCT = 0.00067;   // after-tax margin as a share of the buy price
 const MAX_QUOTE_AGE_H = 2.3;      // hours since the older of the two last trades
-const MIN_TRADE_BUCKETS = 5;      // 5m buckets with trades per side, last 24h
-const MAX_DRIFT = 0.26;           // from the 3-day median
-const MAX_VOLUME_SPIKE = 2.0;     // last 24h volume vs prior daily average
-const BUY_SPREAD_SHARE = 0.045;   // buy at instasell + this share of the spread, + 1 gp
+const MIN_TRADE_BUCKETS = 6;      // 5m buckets with trades per side, last 24h (the champion's 5.1, as a count)
+const MAX_DRIFT = 0.28;           // from the 3-day median
+const MAX_VOLUME_SPIKE = 1.94;    // last 24h volume vs prior daily average
+const BUY_SPREAD_SHARE = 0.0435;  // buy at instasell + this share of the spread, + 1 gp
 const SELL_SPREAD_SHARE = 0.106;  // sell at instabuy − this share of the spread, − 1 gp
-const MAX_ITEM_SHARE = 0.31;      // of your cash per item, but always at least 1 unit (the lab uses equity)
+const MAX_ITEM_SHARE = 0.30;      // of your cash per item, but always at least 1 unit (the lab uses equity)
 // Only the UNIVERSE_SIZE items with the most 24h trading value (volume × instasell, both quotes ≤ 24h old) can be
 // bought, counting items that trade at UNIVERSE_MIN_PRICE+ (all the lab's archive keeps).
 const UNIVERSE_SIZE = 256;

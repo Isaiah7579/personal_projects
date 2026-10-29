@@ -8,4 +8,5 @@ Modules, in dependency order:
     policies  - the generic policy interface and the policy families
     score     - report cards
     evolve    - evolution strategies, writing runs the dashboard reads
+    replay    - one champion over the whole archive, logged as GE slot events
 """

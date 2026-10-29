@@ -335,13 +335,13 @@ def load_market(start: int, end: int, mapping: list[dict]) -> list[ItemSeries]:
     return [ItemSeries(item_id, meta_by_id.get(item_id, {}), r) for item_id, r in rows.items()]
 
 
-def check_times(start: int, end: int) -> list[int]:
-    """Every CHECK_TIMES local wall-clock time in [start, end)."""
+def check_times(start: int, end: int, times: tuple[str, ...] = CHECK_TIMES) -> list[int]:
+    """Every `times` local wall-clock time (default CHECK_TIMES) in [start, end)."""
     out = []
     day = datetime.fromtimestamp(start, LOCAL_TZ).date() - timedelta(days=1)
     last = datetime.fromtimestamp(end, LOCAL_TZ).date()
     while day <= last:
-        for hhmm in CHECK_TIMES:
+        for hhmm in times:
             hour, minute = map(int, hhmm.split(":"))
             ts = int(datetime.combine(day, dtime(hour, minute), LOCAL_TZ).timestamp())
             if start <= ts < end:

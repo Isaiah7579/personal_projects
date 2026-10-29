@@ -9,16 +9,20 @@ SoftRulesFill uses the same parameters but allocates the way a person would: ite
 be bought (the buy limit counted), and it walks them best first, buying what the cash left affords and skipping
 any it can't, until the free slots are full. SoftRules instead takes the top items by score and lets legalize trim
 cash in that order, so an item too dear for the cash left keeps its slot empty.
+
+SoftRulesAdvisor is what the advisor page runs: SoftRules' ranking, but with fewer than 8 free slots items are
+sized as if the stack were equity x 8 / slots, and an item the cash left can't buy one of gives its slot to the next.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import math
 from dataclasses import dataclass
 
 import torch
 
-from backtest_flips import DAY
+from backtest_flips import DAY, GE_SLOTS
 from lab.policies.base import BUY, SELL, Observation, Proposals
 
 
@@ -145,29 +149,46 @@ class SoftRules:
                          torch.where(ok, score, -1.0).float())
 
 
+def fill_slots(obs: Observation, sells: Proposals, rank: torch.Tensor, items, ok, buy, max_qty) -> Proposals:
+    """Walk the items by rank [B, K] (best first), buying what the cash left affords (buy limit counted) and
+    skipping any it can't afford one of, until the free slots are full."""
+    qty = torch.minimum(max_qty, obs.limit_left.gather(1, items.clamp(min=0))).clamp(min=0)
+    ok = ok & (qty >= 1)
+    order = torch.where(ok, rank, -1.0).argsort(dim=1, descending=True)
+    items, ok, buy, qty = (x.gather(1, order) for x in (items, ok, buy, qty))
+    selling = (sells.item >= 0) & (sells.qty > 0) & (sells.price > 0)
+    free = (obs.slots - selling.sum(1)).clamp(min=0)
+    left, used = obs.cash.clone(), torch.zeros_like(free)
+    take_qty = torch.zeros_like(qty)
+    for k in range(items.shape[1]):
+        afford = torch.minimum(qty[:, k], left // buy[:, k].clamp(min=1))
+        take = ok[:, k] & (used < free) & (afford >= 1)
+        take_qty[:, k] = torch.where(take, afford, 0)
+        left -= take_qty[:, k] * buy[:, k]
+        used += take.long()
+        if not bool((used < free).any()):
+            break
+    taken = take_qty > 0
+    prio = torch.arange(items.shape[1], 0, -1, device=items.device).float().expand_as(qty)
+    return Proposals(torch.where(taken, items, -1), torch.full_like(items, BUY), buy, take_qty,
+                     torch.where(taken, prio, -1.0))
+
+
 class SoftRulesFill(SoftRules):
     """SoftRules that fills every free slot it can afford (see the module docstring)."""
     name = "soft-rules-fill"
 
     def allocate(self, obs: Observation, sells: Proposals, items, ok, buy, max_qty, margin) -> Proposals:
         qty = torch.minimum(max_qty, obs.limit_left.gather(1, items.clamp(min=0))).clamp(min=0)
-        ok = ok & (qty >= 1)
-        score = torch.where(ok, (qty * margin).double(), -1.0)
-        order = score.argsort(dim=1, descending=True)
-        items, ok, buy, qty = (x.gather(1, order) for x in (items, ok, buy, qty))
-        selling = (sells.item >= 0) & (sells.qty > 0) & (sells.price > 0)
-        free = (obs.slots - selling.sum(1)).clamp(min=0)
-        left, used = obs.cash.clone(), torch.zeros_like(free)
-        take_qty = torch.zeros_like(qty)
-        for k in range(items.shape[1]):
-            afford = torch.minimum(qty[:, k], left // buy[:, k].clamp(min=1))
-            take = ok[:, k] & (used < free) & (afford >= 1)
-            take_qty[:, k] = torch.where(take, afford, 0)
-            left -= take_qty[:, k] * buy[:, k]
-            used += take.long()
-            if not bool((used < free).any()):
-                break
-        taken = take_qty > 0
-        prio = torch.arange(items.shape[1], 0, -1, device=items.device).float().expand_as(qty)
-        return Proposals(torch.where(taken, items, -1), torch.full_like(items, BUY), buy, take_qty,
-                         torch.where(taken, prio, -1.0))
+        return fill_slots(obs, sells, (qty * margin).double(), items, ok, buy, max_qty)
+
+
+class SoftRulesAdvisor(SoftRules):
+    """SoftRules as the advisor page runs it (see the module docstring)."""
+    name = "soft-rules-advisor"
+
+    def act(self, obs: Observation) -> Proposals:
+        return super().act(dataclasses.replace(obs, equity=obs.equity * GE_SLOTS // obs.slots))
+
+    def allocate(self, obs: Observation, sells: Proposals, items, ok, buy, max_qty, margin) -> Proposals:
+        return fill_slots(obs, sells, (max_qty * margin).double(), items, ok, buy, max_qty)

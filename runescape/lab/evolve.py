@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 import numpy as np
 import torch
 
-from backtest_flips import STRATEGIES
+from backtest_flips import CHECK_TIMES, STRATEGIES
 from lab import env as E
 from lab import market as M
 from lab import score, splits
@@ -31,12 +31,18 @@ from lab.features import Features
 from lab.market import LAB_DIR
 from lab.policies.neural import Neural
 from lab.policies.rules import RulesPolicy
-from lab.policies.soft_rules import SoftRules, SoftRulesFill
+from lab.policies.soft_rules import SoftRules, SoftRulesAdvisor, SoftRulesFill
 
-POLICIES = {"soft-rules": SoftRules, "soft-rules-fill": SoftRulesFill, "neural": Neural}
+POLICIES = {"soft-rules": SoftRules, "soft-rules-fill": SoftRulesFill, "soft-rules-advisor": SoftRulesAdvisor,
+            "neural": Neural}
 RUNS_DIR = LAB_DIR / "runs"
-REPLAY_STACK = 1_800_000_000
+REPLAY_STACK = 1_800_000_000  # or the run's validation stack nearest it
 REPLAY_ITEMS = 8
+
+
+def check_schedule(args: dict) -> tuple[str, ...]:
+    """A run's check-in times (runs from before --checks used CHECK_TIMES)."""
+    return tuple(t.strip() for t in args.get("checks", ",".join(CHECK_TIMES)).split(","))
 
 
 def centered_ranks(x: torch.Tensor) -> torch.Tensor:
@@ -51,10 +57,15 @@ def write_json(path, data) -> None:
     tmp.replace(path)
 
 
-def replay(mkt: E.MarketOnDevice, policy, params, split: splits.Split, cfg: E.EnvConfig, obs_lag: int) -> dict:
-    """The champion's trades in the validation episode it did median-best in, at 1.8b, with the price history of
+def stack_key(stack: int) -> str:
+    return f"{stack / 1e9:g}b"  # how score.evaluate labels a stack
+
+
+def replay(mkt: E.MarketOnDevice, policy, params, split: splits.Split, cfg: E.EnvConfig, obs_lag: int,
+           stack: int = REPLAY_STACK) -> dict:
+    """The champion's trades in the validation episode it did median-best in, at `stack`, with the price history of
     the items it traded most, for the dashboard's trade replay."""
-    card = score.evaluate(mkt, policy, split, cfg, obs_lag, stacks=(REPLAY_STACK,), params=params, track=True)
+    card = score.evaluate(mkt, policy, split, cfg, obs_lag, stacks=(stack,), params=params, track=True)
     res = card.pop("result")
     g = card["growth"][0]
     e = int(np.argsort(g)[len(g) // 2])
@@ -62,7 +73,7 @@ def replay(mkt: E.MarketOnDevice, policy, params, split: splits.Split, cfg: E.En
     end = start + splits.EPISODE
     trades = [tr for tr in res.trades if tr[0] == e]
     volume = {}
-    for _, _, item, _, qty, price in trades:
+    for _, _, item, _, qty, price, _ in trades:
         volume[item] = volume.get(item, 0) + qty * price
     top = sorted(volume, key=volume.get, reverse=True)[:REPLAY_ITEMS]
     lo, hi = mkt.market.bucket(start), mkt.market.bucket(end)
@@ -79,8 +90,8 @@ def replay(mkt: E.MarketOnDevice, policy, params, split: splits.Split, cfg: E.En
                 pts.append(None if not ok.any() else float(chunk[ok].mean()))
             series[key] = pts
         items.append({"name": mkt.market.names[n], "t0": start, "step": step * 300, **series,
-                      "fills": [[ts, side, qty, price] for _, ts, item, side, qty, price in trades if item == n]})
-    return {"episode_start": start, "growth": g[e], "equity": card["curves"][f"{REPLAY_STACK / 1e9:g}b"][e],
+                      "fills": [[ts, side, qty, price] for _, ts, item, side, qty, price, _ in trades if item == n]})
+    return {"episode_start": start, "growth": g[e], "equity": card["curves"][stack_key(stack)][e], "stack": stack,
             "checks": [int(t) for t in mkt.features.checks if start <= t < end], "items": items,
             "price_tiers": price_tiers(trades)}
 
@@ -88,7 +99,7 @@ def replay(mkt: E.MarketOnDevice, policy, params, split: splits.Split, cfg: E.En
 def price_tiers(trades) -> list[int]:
     """Gp spent on buys by log10 price, in quarter-decade bins from 1m (6.0) to 100b (11.0)."""
     bins = [0] * 20
-    for _, _, _, side, qty, price in trades:
+    for _, _, _, side, qty, price, _ in trades:
         if side == E.BUY and price > 0:
             bins[min(19, max(0, int((math.log10(price) - 6) * 4)))] += qty * price
     return bins
@@ -112,6 +123,8 @@ def main() -> None:
     parser.add_argument("--stack-min", type=float, default=1.5e9)
     parser.add_argument("--stack-max", type=float, default=6e9)
     parser.add_argument("--slots", type=int, default=E.GE_SLOTS, help="GE slots the account has")
+    parser.add_argument("--checks", default=",".join(CHECK_TIMES),
+                        help="check-in times, local (America/Chicago), comma-separated")
     parser.add_argument("--eval-every", type=int, default=5)
     parser.add_argument("--patience", type=int, default=0, help="stop after this many evals without a new "
                                                                     "champion (0 = never)")
@@ -129,7 +142,7 @@ def main() -> None:
     rng = np.random.default_rng(args.seed)
     dev = "cuda"
     market = M.load()
-    features = Features(market, args.obs_lag)
+    features = Features(market, args.obs_lag, check_at=check_schedule(vars(args)))
     mkt = E.MarketOnDevice(market, features, dev)
     train_items = 0 if args.item_split else None
     mkt.use_items(train_items)
@@ -137,6 +150,7 @@ def main() -> None:
     starts = splits.episode_starts(split.train, features.checks)
     cfg = E.EnvConfig(fill_model=args.fill_model, haircut=args.haircut, slots=args.slots)
     val_stacks = score.stacks_for(args.stack_min, args.stack_max)
+    replay_stack = min(val_stacks, key=lambda s: abs(s - REPLAY_STACK))
     family = POLICIES[args.policy]
     policy = family()
 
@@ -209,11 +223,11 @@ def main() -> None:
                 mkt.use_items(train_items)
                 row["val_unseen"] = {k: unseen[k] for k in ("score", "worst", "cvar25")}
             write_json(run_dir / "evals" / f"gen_{gen:05d}.json",
-                       {"gen": gen, "score": card["score"], "curves": card["curves"][f"{REPLAY_STACK / 1e9:g}b"]})
+                       {"gen": gen, "score": card["score"], "curves": card["curves"][stack_key(replay_stack)]})
             if card["score"] > best:
                 best, best_gen, evals_since_best = card["score"], gen, 0
                 torch.save({"policy": args.policy, "params": theta.cpu(), "gen": gen}, run_dir / "champion.pt")
-                rep = replay(mkt, policy, theta, split.validation, cfg, args.obs_lag)
+                rep = replay(mkt, policy, theta, split.validation, cfg, args.obs_lag, replay_stack)
                 write_json(run_dir / "champion.json", {"gen": gen, "card": card, "replay": rep,
                                                        "values": policy.describe(theta)})
                 with (run_dir / "champions.jsonl").open("a", encoding="utf-8") as f:
